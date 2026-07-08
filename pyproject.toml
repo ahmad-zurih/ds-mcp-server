@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta:__legacy__"
+
+[project]
+name = "ds-mcp-server"
+version = "0.1.0"
+description = "An MCP server exposing data science tools (plotting, stats, data exploration) to any LLM client."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Ahmad Alhineidi" }]
+keywords = ["mcp", "llm", "data-science", "visualization", "plotly", "pandas"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pandas>=2.0",
+    "plotly>=5.0",
+    "matplotlib>=3.7",
+    "seaborn>=0.13",
+    "numpy>=1.24",
+    "pingouin>=0.5",
+    "statsmodels>=0.14",
+    "wordcloud>=1.9",
+    "beautifulsoup4>=4.12",
+    "ddgs>=6.0",
+    "python-dotenv>=1.0",
+    "openai>=1.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.20"]
+playwright = ["playwright>=1.40"]
+all = ["anthropic>=0.20", "playwright>=1.40"]
+
+[project.scripts]
+ds-mcp-server = "ds_mcp_server.cli:serve"
+ds-mcp-client = "ds_mcp_server.cli:chat"
+
+[tool.setuptools.packages.find]
+where = ["src"]
