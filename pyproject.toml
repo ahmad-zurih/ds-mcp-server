@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta:__legacy__"
 
 [project]
 name = "ds-mcp-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "An MCP server exposing data science tools (plotting, stats, data exploration) to any LLM client."
 readme = "README.md"
 license = { text = "MIT" }
@@ -33,6 +33,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "openai>=1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ahmad-zurih/ds-mcp-server"
+Repository = "https://github.com/ahmad-zurih/ds-mcp-server"
+"Bug Tracker" = "https://github.com/ahmad-zurih/ds-mcp-server/issues"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.20"]
