@@ -6,3 +6,11 @@ build/
 .env
 venv/
 .venv/
+
+# setuptools-scm writes this at build time
+src/ds_mcp_server/_version.py
+
+# pytest / mypy caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

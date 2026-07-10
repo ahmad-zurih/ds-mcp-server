@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta:__legacy__"
+requires = ["setuptools>=68", "wheel", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "ds-mcp-server"
-version = "0.1.1"
+dynamic = ["version"]
 description = "An MCP server exposing data science tools (plotting, stats, data exploration) to any LLM client."
 readme = "README.md"
 license = { text = "MIT" }
@@ -54,6 +54,15 @@ ds-mcp-client = "ds_mcp_server.cli:chat"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools_scm]
+# Version is derived from the latest git tag (e.g. tag "v0.2.0" -> version "0.2.0").
+# On untagged commits, produces a dev version like "0.2.1.dev3+g1a2b3c4".
+# Write the resolved version into the built package so `importlib.metadata` can read it.
+version_file = "src/ds_mcp_server/_version.py"
+# Prefer clean release versions on tagged commits; use PEP 440 dev scheme in between.
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
