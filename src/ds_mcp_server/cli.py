@@ -17,8 +17,22 @@ def serve() -> None:
         default="stdio",
         help="Transport for the MCP server.",
     )
+    parser.add_argument(
+        "--enable-system-tools",
+        action="store_true",
+        help=(
+            "DANGEROUS: register the optional shell/file/HTTP/background-process tools. "
+            "Grants the connected LLM RCE-equivalent access to this machine. Only use "
+            "inside a sandbox (Docker, WSL, VM, or a dedicated user). Equivalent to "
+            "setting DS_MCP_ENABLE_SYSTEM_TOOLS=1."
+        ),
+    )
     args = parser.parse_args()
 
+    if args.enable_system_tools:
+        os.environ["DS_MCP_ENABLE_SYSTEM_TOOLS"] = "1"
+
+    # Import AFTER the env var is set so the server's opt-in check sees it.
     from ds_mcp_server.server import mcp
 
     mcp.run(transport=args.transport)

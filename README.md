@@ -4,7 +4,7 @@
 
 ## Installation
 
-Future PyPI install:
+Install from PyPI:
 
 ```bash
 pip install ds-mcp-server
@@ -83,6 +83,66 @@ ds-mcp-client
 ds-mcp-server
 ```
 
+To also expose the optional (dangerous) system tools — shell execution, file
+read/write/patch, background processes, and HTTP requests:
+
+```bash
+ds-mcp-server --enable-system-tools
+# or, equivalently:
+DS_MCP_ENABLE_SYSTEM_TOOLS=1 ds-mcp-server
+```
+
+See the [Optional system tools](#optional-system-tools) section below before enabling.
+
+## ⚠️ Optional system tools
+
+By default `ds-mcp-server` only exposes safe read-only data-science tools
+(plots, statistics, dataset summaries, web fetch/search). A second group of
+**system / coder tools** is bundled in the package but is **disabled by default**
+because it grants the connected LLM effectively remote-code-execution power.
+
+The gated tools are:
+
+- `run_shell_command` — runs any shell command with your user's privileges
+- `read_file`, `write_file`, `patch_file`, `list_directory` — arbitrary file I/O
+- `find_in_files` — regex-search anywhere on disk
+- `run_background_process`, `stop_background_process`, `list_background_processes`
+- `http_request` — arbitrary outbound HTTP (SSRF risk: can reach localhost,
+  cloud metadata endpoints, internal services, etc.)
+
+### Enabling
+
+Only enable inside a sandbox you trust (Docker container, WSL, dedicated VM,
+or a throwaway user account). The LLM decides when to call these — a single
+prompt-injection or misinterpretation is enough to trigger destructive actions.
+
+Two equivalent ways to enable:
+
+```bash
+# Preferred: env var, works with any MCP client (Claude Desktop, LM Studio, …)
+export DS_MCP_ENABLE_SYSTEM_TOOLS=1
+
+# Or as a CLI flag when launching the server directly
+ds-mcp-server --enable-system-tools
+```
+
+When enabled, the server prints a warning banner to stderr at startup listing
+every dangerous tool that was registered. When disabled, it prints a one-line
+hint telling you how to opt in.
+
+### Claude Desktop config with system tools enabled
+
+```json
+{
+  "mcpServers": {
+    "ds-mcp-server": {
+      "command": "ds-mcp-server",
+      "args": ["--enable-system-tools"]
+    }
+  }
+}
+```
+
 ## Claude Desktop MCP config
 
 Add the server to your Claude Desktop MCP configuration:
@@ -142,7 +202,9 @@ Add the server to your Claude Desktop MCP configuration:
 - `run_linear_regression`
 - `rank_target_correlations`
 
-### System tools
+### System tools (opt-in — see [Optional system tools](#optional-system-tools))
+
+Only registered when `DS_MCP_ENABLE_SYSTEM_TOOLS=1` (or `--enable-system-tools`).
 
 - `run_shell_command`
 - `read_file`
