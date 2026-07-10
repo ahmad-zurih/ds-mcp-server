@@ -43,6 +43,10 @@ Repository = "https://github.com/ahmad-zurih/ds-mcp-server"
 anthropic = ["anthropic>=0.20"]
 playwright = ["playwright>=1.40"]
 all = ["anthropic>=0.20", "playwright>=1.40"]
+dev = [
+    "pytest>=7.4",
+    "openpyxl>=3.1",
+]
 
 [project.scripts]
 ds-mcp-server = "ds_mcp_server.cli:serve"
@@ -50,3 +54,11 @@ ds-mcp-client = "ds_mcp_server.cli:chat"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
