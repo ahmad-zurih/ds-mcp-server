@@ -12,6 +12,7 @@ import pandas.api.types as ptypes
 import seaborn as sns
 from wordcloud import STOPWORDS, WordCloud
 
+from .sandbox import SandboxTimeout, SandboxViolation, run_sandboxed
 from .viz_utils import _strip_show_calls, get_plot_path, load_data_safely
 
 
@@ -216,7 +217,16 @@ def generate_custom_static_plot_impl(
         # Close any stale figures from previous runs in this process.
         plt.close("all")
 
-        exec(clean_code, local_scope)
+        try:
+            run_sandboxed(clean_code, local_scope)
+        except SandboxViolation as exc:
+            return (
+                f"Error: sandbox rejected the code — {exc}\n"
+                "The custom plot tool exposes df, pd, np, plt, sns, WordCloud. "
+                "Do not import modules, call open()/eval()/exec(), or access dunder attributes."
+            )
+        except SandboxTimeout as exc:
+            return f"Error: {exc}"
 
         # Prefer an explicit `fig` if the LLM created one; otherwise use the
         # currently active matplotlib figure.

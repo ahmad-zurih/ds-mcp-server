@@ -27,12 +27,25 @@ def serve() -> None:
             "setting DS_MCP_ENABLE_SYSTEM_TOOLS=1."
         ),
     )
+    parser.add_argument(
+        "--allow-unrestricted-exec",
+        action="store_true",
+        help=(
+            "DANGEROUS: disable the sandbox around LLM-generated code in the "
+            "generate_custom_plotly and generate_custom_static_plot tools. When "
+            "off (the default), those tools reject imports, dunder attribute "
+            "access, and calls to eval/exec/open/__import__/etc. Equivalent to "
+            "setting DS_MCP_ALLOW_UNRESTRICTED_EXEC=1."
+        ),
+    )
     args = parser.parse_args()
 
     if args.enable_system_tools:
         os.environ["DS_MCP_ENABLE_SYSTEM_TOOLS"] = "1"
+    if args.allow_unrestricted_exec:
+        os.environ["DS_MCP_ALLOW_UNRESTRICTED_EXEC"] = "1"
 
-    # Import AFTER the env var is set so the server's opt-in check sees it.
+    # Import AFTER the env vars are set so the server's opt-in checks see them.
     from ds_mcp_server.server import mcp
 
     mcp.run(transport=args.transport)

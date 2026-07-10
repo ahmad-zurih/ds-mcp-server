@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from .sandbox import SandboxTimeout, SandboxViolation, run_sandboxed
 from .viz_utils import (
     _strip_show_calls,
     generate_code_snippet,
@@ -395,8 +396,18 @@ def generate_custom_plotly_impl(
         clean_code = python_code.replace("```python", "").replace("```", "").strip()
         clean_code = _strip_show_calls(clean_code)
 
-        # Execute the custom code
-        exec(clean_code, local_scope)
+        # Execute inside the sandbox (AST allow-list + restricted builtins + timeout).
+        # Users who need unrestricted exec can set DS_MCP_ALLOW_UNRESTRICTED_EXEC=1.
+        try:
+            run_sandboxed(clean_code, local_scope)
+        except SandboxViolation as exc:
+            return (
+                f"Error: sandbox rejected the code — {exc}\n"
+                "The custom plot tool exposes df, pd, np, px, go. "
+                "Do not import modules, call open()/eval()/exec(), or access dunder attributes."
+            )
+        except SandboxTimeout as exc:
+            return f"Error: {exc}"
 
         # The system prompt enforces that the LLM must assign the output to 'fig'
         if "fig" not in local_scope:

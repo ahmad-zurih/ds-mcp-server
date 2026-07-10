@@ -143,6 +143,46 @@ hint telling you how to opt in.
 }
 ```
 
+## 🔒 Sandbox for LLM-generated plotting code
+
+Two tools — `generate_custom_plotly` and `generate_custom_static_plot` — accept
+a Python code string produced by the LLM and `exec()` it in-process to render a
+plot. Because that code can be influenced by any dataset, webpage, or file the
+model reads, `ds-mcp-server` sandboxes it **by default**.
+
+### What the sandbox blocks
+
+- `import` and `from ... import` statements (all needed libraries — `pd`, `np`,
+  `px`, `go`, `plt`, `sns`, `WordCloud`, `df` — are pre-injected).
+- Calls to `eval`, `exec`, `compile`, `open`, `__import__`, `getattr`,
+  `setattr`, `delattr`, `globals`, `locals`, `vars`, `input`, `breakpoint`.
+- Access to any dunder attribute (`.__class__`, `.__subclasses__`, etc.) — this
+  closes the common `().__class__.__mro__[-1].__subclasses__()` escape.
+- Runaway execution — a 60s wall-clock timeout aborts the tool call.
+
+### What the sandbox does NOT block (honest limits)
+
+- **Filesystem access via pre-imported libraries.** `pd.read_csv("/etc/passwd")`
+  still works because pandas legitimately needs to read files. For strong
+  isolation run the server inside a container, VM, or dedicated user account.
+- **Native-code CPU/memory exhaustion.** Python threads cannot interrupt C
+  extensions, so the timeout is best-effort against numpy/pandas hot loops.
+
+### Disabling the sandbox
+
+If you trust the LLM and want unrestricted `exec` (e.g. for advanced plotting
+that legitimately needs `import`), you can opt out:
+
+```bash
+# Env var (works with any MCP client)
+export DS_MCP_ALLOW_UNRESTRICTED_EXEC=1
+
+# Or CLI flag
+ds-mcp-server --allow-unrestricted-exec
+```
+
+When disabled, the server prints a warning banner to stderr at startup.
+
 ## Claude Desktop MCP config
 
 Add the server to your Claude Desktop MCP configuration:

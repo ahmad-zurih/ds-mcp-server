@@ -26,6 +26,35 @@ def _system_tools_enabled() -> bool:
     return val in ("1", "true", "yes", "on")
 
 
+def _unrestricted_exec_enabled() -> bool:
+    """Return True if the user opted out of the custom-plot sandbox."""
+    val = os.environ.get("DS_MCP_ALLOW_UNRESTRICTED_EXEC", "").strip().lower()
+    return val in ("1", "true", "yes", "on")
+
+
+def _emit_unrestricted_exec_warning() -> None:
+    """Loud stderr warning when the sandbox around custom-plot exec is disabled."""
+    banner = "!" * 72
+    lines = [
+        "",
+        banner,
+        "!! ds-mcp-server: CUSTOM-PLOT SANDBOX IS DISABLED",
+        "!!",
+        "!! generate_custom_plotly and generate_custom_static_plot will exec the",
+        "!! LLM's Python code with FULL privileges — imports, open(), eval(),",
+        "!! subprocess, etc. are all allowed.",
+        "!!",
+        "!! A hostile dataset, webpage, or file that the model reads can inject",
+        "!! instructions that trigger arbitrary code execution on this machine.",
+        "!!",
+        "!! To re-enable the sandbox, unset DS_MCP_ALLOW_UNRESTRICTED_EXEC or",
+        "!! omit the --allow-unrestricted-exec flag.",
+        banner,
+        "",
+    ]
+    print("\n".join(lines), file=sys.stderr, flush=True)
+
+
 from mcp.server.fastmcp import FastMCP
 
 from ds_mcp_server._tools.plot_data import get_all_columns_summary_impl, get_column_summary_impl
@@ -522,6 +551,9 @@ if _system_tools_enabled():
     _emit_system_tools_warning()
 else:
     _emit_system_tools_hint()
+
+if _unrestricted_exec_enabled():
+    _emit_unrestricted_exec_warning()
 
 
 # --- WEB / INTERNET TOOLS ---
