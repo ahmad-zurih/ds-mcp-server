@@ -187,6 +187,43 @@ When disabled, the server prints a warning banner to stderr at startup.
 
 Add the server to your Claude Desktop MCP configuration:
 
+## 🖥️ Browser chat UI (optional)
+
+Prefer clicking over typing? `ds-mcp-server` ships with an optional
+browser-based chat UI that talks to the same MCP server and renders plots
+inline (interactive Plotly HTML in an iframe, PNG/SVG as images).
+
+Install the extra:
+
+```bash
+pip install 'ds-mcp-server[web]'
+```
+
+Launch it (with your `.env` in the current directory or in `~/.env`):
+
+```bash
+ds-mcp-webui                # http://127.0.0.1:8765
+ds-mcp-webui --port 9000    # custom port
+ds-mcp-webui -p openai -m gpt-4o
+```
+
+Then open the printed URL in your browser. The UI:
+
+- Streams tool calls as they happen (little pill chips per tool).
+- Renders generated plots inline — interactive Plotly plots are fully
+  scrollable/zoomable directly in the chat.
+- Shows all available MCP tools in a searchable sidebar.
+- Works with any provider the CLI client supports (OpenAI, Anthropic,
+  Gemini, Ollama, LM Studio / GPUStack / any OpenAI-compat endpoint).
+- **Settings panel** (⚙ in the sidebar) lets you toggle the dangerous
+  opt-ins — **System / coder tools** and **Unrestricted `exec()`** — with
+  clear warnings. Toggling either one restarts the underlying MCP process
+  so the change takes effect without leaving the browser.
+
+By default it binds to `127.0.0.1` (localhost only). Use `--host 0.0.0.0`
+to expose it on your LAN — but be aware that anyone reaching the port can
+chat through your API key.
+
 ```json
 {
   "mcpServers": {

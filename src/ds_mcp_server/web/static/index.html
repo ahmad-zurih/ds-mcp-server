@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ds-mcp-server · Chat</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+</head>
+<body>
+  <div class="bg-orb bg-orb--a"></div>
+  <div class="bg-orb bg-orb--b"></div>
+  <div class="bg-orb bg-orb--c"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <span class="logo-mark">ds</span>
+        <span class="logo-text">mcp-server</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Session</div>
+      <div class="pill" id="provider-pill">provider · loading…</div>
+      <div class="pill" id="model-pill">model · loading…</div>
+      <div class="pill pill--status" id="status-pill">
+        <span class="dot"></span>connecting
+      </div>
+    </div>
+
+    <div class="sidebar-section sidebar-section--tools">
+      <div class="sidebar-label">
+        Tools <span class="tool-count" id="tool-count">0</span>
+      </div>
+      <input type="text" class="tool-search" id="tool-search" placeholder="Filter tools…" />
+      <ul class="tool-list" id="tool-list"></ul>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="ghost-btn" id="settings-btn" title="Advanced settings">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        settings
+      </button>
+      <button class="ghost-btn" id="reset-btn" title="Start a new conversation">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1 4 1 10 7 10"></polyline>
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+        </svg>
+        new chat
+      </button>
+    </div>
+  </aside>
+
+  <!-- Settings modal -->
+  <div class="modal-backdrop" id="settings-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header class="modal-header">
+        <h2 id="settings-title">Advanced settings</h2>
+        <button class="icon-btn" id="settings-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6"  y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </header>
+
+      <div class="modal-body">
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">
+              <span class="danger-tag">⚠ dangerous</span>
+              System / coder tools
+            </div>
+            <p class="setting-desc">
+              Adds tools that let the model run shell commands, read/write
+              arbitrary files, spawn background processes, and make outbound
+              HTTP requests. A single prompt-injection is enough to cause
+              destructive actions.
+              <strong>Only enable inside a sandbox you trust</strong>
+              (VM, container, throwaway user account).
+            </p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-system-tools" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">
+              <span class="danger-tag">⚠ dangerous</span>
+              Unrestricted <code>exec()</code>
+            </div>
+            <p class="setting-desc">
+              Disables the sandbox around LLM-generated code in
+              <code>generate_custom_plotly</code> and
+              <code>generate_custom_static_plot</code>. When off (the default),
+              those tools block <code>import</code>, dunder attribute access,
+              and calls to <code>eval</code>/<code>exec</code>/<code>open</code>/etc.
+            </p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-unrestricted-exec" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-note" id="settings-note" hidden></div>
+      </div>
+
+      <footer class="modal-footer">
+        <button class="ghost-btn" id="settings-cancel">Cancel</button>
+        <button class="primary-btn" id="settings-apply">Apply &amp; restart MCP</button>
+      </footer>
+    </div>
+  </div>
+
+  <main class="chat">
+    <header class="chat-header">
+      <button class="icon-btn sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="6"  x2="21" y2="6"></line>
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+      <div class="chat-title">
+        <h1>Data Science MCP</h1>
+        <p class="chat-sub">chat + plots + stats</p>
+      </div>
+    </header>
+
+    <section class="messages" id="messages">
+      <div class="welcome">
+        <div class="welcome-icon">
+          <svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18"></path>
+            <polyline points="7 15 11 11 14 14 20 8"></polyline>
+          </svg>
+        </div>
+        <h2>Welcome</h2>
+        <p>Ask questions about your data and I'll load it, analyse it, and plot it.</p>
+        <div class="chips">
+          <button class="chip" data-prompt="Load /path/to/data.csv and show me a summary of every column.">
+            summarise a CSV
+          </button>
+          <button class="chip" data-prompt="Load /path/to/data.csv and generate a correlation heatmap of the numeric columns.">
+            correlation heatmap
+          </button>
+          <button class="chip" data-prompt="Load /path/to/data.csv and plot the distribution of every numeric column.">
+            distributions
+          </button>
+          <button class="chip" data-prompt="Load /path/to/data.csv and run a linear regression of y on x.">
+            regression
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <form class="composer" id="composer">
+      <div class="composer-inner">
+        <textarea
+          id="input"
+          placeholder="Ask me about your data…  (Shift+Enter for newline, Enter to send)"
+          rows="1"
+          autocomplete="off"
+        ></textarea>
+        <button type="submit" class="send-btn" id="send-btn" disabled aria-label="Send">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2"  x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+      <div class="composer-hint">
+        <span>ds-mcp-server web · runs locally, all data stays on your machine</span>
+      </div>
+    </form>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

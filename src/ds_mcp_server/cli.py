@@ -103,3 +103,59 @@ def _detect_provider() -> str:
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "anthropic"
     return "openai"
+
+
+def webui() -> None:
+    """Launch the browser-based chat UI. Used by ds-mcp-webui command."""
+    parser = argparse.ArgumentParser(
+        prog="ds-mcp-webui",
+        description="Start the ds-mcp-server browser chat UI.",
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Interface to bind (default: 127.0.0.1). Use 0.0.0.0 to expose on your LAN.",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8765,
+        help="Port to listen on (default: 8765).",
+    )
+    parser.add_argument(
+        "--reload", action="store_true",
+        help="Enable uvicorn auto-reload (for development only).",
+    )
+    parser.add_argument(
+        "--provider", "-p",
+        choices=["openai", "anthropic", "gemini", "ollama", "openai-compat"],
+        default=None,
+        help="LLM provider (overrides the PROVIDER env var).",
+    )
+    parser.add_argument("--model", "-m", default=None, help="Model name override.")
+    args = parser.parse_args()
+
+    # Best-effort .env loading, same as the CLI chat command.
+    try:
+        from dotenv import load_dotenv
+        for candidate in [".env", os.path.expanduser("~/.env")]:
+            if os.path.exists(candidate):
+                load_dotenv(candidate)
+                break
+    except ImportError:
+        pass
+
+    if args.provider:
+        os.environ["PROVIDER"] = args.provider
+    if args.model:
+        os.environ["MODEL"] = args.model
+
+    try:
+        from ds_mcp_server.web.app import run_server
+    except ImportError as exc:
+        print(
+            "[Error] Web UI dependencies not installed. Install with:\n"
+            "  pip install 'ds-mcp-server[web]'\n"
+            f"(underlying import error: {exc})",
+            file=__import__("sys").stderr,
+        )
+        __import__("sys").exit(1)
+
+    run_server(host=args.host, port=args.port, reload=args.reload)
