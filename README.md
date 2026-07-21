@@ -2,6 +2,19 @@
 
 `ds-mcp-server` packages a FastMCP server with data science, plotting, statistics, system, and web tools, plus interactive CLI clients for OpenAI-compatible providers and Anthropic Claude.
 
+## What's in the box
+
+After you `pip install ds-mcp-server`, three commands are available:
+
+| Command | What it is | When to use it |
+|---|---|---|
+| **`ds-mcp-webui`** | Browser chat UI | You want to chat and see plots in your browser. **Start here.** |
+| **`ds-mcp-client`** | Interactive terminal chat | You prefer the CLI. Same features as the web UI, minus inline plot rendering. |
+| **`ds-mcp-server`** | The MCP server itself | You are configuring an **external** MCP client (Claude Desktop, LM Studio, Cursor, etc.) to launch it. **Do not run this by hand** — it will look "frozen" because it's silently waiting for MCP protocol messages on stdin. |
+
+> **In short:** for humans → `ds-mcp-webui` or `ds-mcp-client`.
+> For MCP clients configured with a `command` field → `ds-mcp-server`.
+
 ## Installation
 
 Install from PyPI:
@@ -29,7 +42,7 @@ pip install -e ".[all]"
 1. Copy `.env.example` to `.env`.
 2. Fill in your provider settings.
 3. Install the package.
-4. Start either the MCP server or the interactive client.
+4. Run **`ds-mcp-webui`** (browser) or **`ds-mcp-client`** (terminal) to chat.
 
 ### OpenAI
 
@@ -37,7 +50,9 @@ pip install -e ".[all]"
 export PROVIDER=openai
 export API_KEY=sk-...
 export MODEL=gpt-4o
-ds-mcp-client
+ds-mcp-webui         # browser chat  →  http://127.0.0.1:8765
+# or
+ds-mcp-client        # terminal chat
 ```
 
 ### Claude / Anthropic
@@ -46,7 +61,7 @@ ds-mcp-client
 export PROVIDER=anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
 export MODEL=claude-opus-4-5
-ds-mcp-client
+ds-mcp-webui
 ```
 
 ### Gemini (OpenAI-compatible endpoint)
@@ -55,7 +70,7 @@ ds-mcp-client
 export PROVIDER=gemini
 export API_KEY=AIza...
 export MODEL=gemini-2.0-flash
-ds-mcp-client
+ds-mcp-webui
 ```
 
 ### Ollama
@@ -64,7 +79,7 @@ ds-mcp-client
 export PROVIDER=ollama
 export API_BASE_URL=http://localhost:11434/v1
 export MODEL=llama3
-ds-mcp-client
+ds-mcp-webui
 ```
 
 ### GPUStack / LM Studio / other OpenAI-compatible servers
@@ -74,25 +89,28 @@ export PROVIDER=openai-compat
 export API_BASE_URL=https://your-endpoint.example/v1
 export API_KEY=your-key
 export MODEL=your-model
-ds-mcp-client
+ds-mcp-webui
 ```
 
-## Running the MCP server
+## Running the MCP server (for external MCP clients only)
+
+If you are wiring up an **external** MCP client — Claude Desktop, LM Studio,
+Cursor, or anything else that spawns MCP servers as subprocesses — point it at
+the `ds-mcp-server` command. **You don't run this yourself in a terminal**;
+the MCP client does it for you and talks to it over stdin/stdout.
 
 ```bash
-ds-mcp-server
+ds-mcp-server                     # what an MCP client will invoke for you
+ds-mcp-server --enable-system-tools    # add shell/file/HTTP tools (dangerous)
 ```
 
-To also expose the optional (dangerous) system tools — shell execution, file
-read/write/patch, background processes, and HTTP requests:
+If you ran `ds-mcp-server` in your terminal and it appears to hang after
+printing a startup line — that's expected. It's waiting for MCP protocol
+messages that only an MCP client can send. Press **Ctrl+C** to exit and use
+`ds-mcp-webui` or `ds-mcp-client` instead.
 
-```bash
-ds-mcp-server --enable-system-tools
-# or, equivalently:
-DS_MCP_ENABLE_SYSTEM_TOOLS=1 ds-mcp-server
-```
-
-See the [Optional system tools](#optional-system-tools) section below before enabling.
+See the [Optional system tools](#optional-system-tools) section below before
+enabling the `--enable-system-tools` flag.
 
 ## ⚠️ Optional system tools
 
@@ -193,10 +211,10 @@ Prefer clicking over typing? `ds-mcp-server` ships with an optional
 browser-based chat UI that talks to the same MCP server and renders plots
 inline (interactive Plotly HTML in an iframe, PNG/SVG as images).
 
-Install the extra:
+It's included in the base install — no extras needed:
 
 ```bash
-pip install 'ds-mcp-server[web]'
+pip install ds-mcp-server
 ```
 
 Launch it (with your `.env` in the current directory or in `~/.env`):

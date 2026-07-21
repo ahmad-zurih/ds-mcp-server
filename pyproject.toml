@@ -32,6 +32,9 @@ dependencies = [
     "ddgs>=6.0",
     "python-dotenv>=1.0",
     "openai>=1.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12",
 ]
 
 [project.urls]
@@ -42,21 +45,15 @@ Repository = "https://github.com/ahmad-zurih/ds-mcp-server"
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.20"]
 playwright = ["playwright>=1.40"]
-web = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "websockets>=12"]
-all = [
-    "anthropic>=0.20",
-    "playwright>=1.40",
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
-    "websockets>=12",
-]
+# The [web] extra is kept for backward compatibility but is now a no-op —
+# fastapi/uvicorn/websockets ship with the base install so `ds-mcp-webui`
+# works out of the box.
+web = []
+all = ["anthropic>=0.20", "playwright>=1.40"]
 dev = [
     "pytest>=7.4",
     "openpyxl>=3.1",
     "httpx>=0.27",
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
-    "websockets>=12",
 ]
 
 [project.scripts]
