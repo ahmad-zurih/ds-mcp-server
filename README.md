@@ -37,12 +37,60 @@ pip install -e ".[playwright]"
 pip install -e ".[all]"
 ```
 
+## First-time setup (all platforms)
+
+After `pip install`, you need to tell the client which LLM to talk to. The
+fastest way is to let the tool generate a template for you:
+
+```bash
+ds-mcp-webui --init-env
+```
+
+This writes a `.env` file to the current folder with every provider commented
+out. Open it in any text editor, uncomment the block for your provider, paste
+your API key, save, then run `ds-mcp-webui` again from the same folder.
+
+### Alternative: set the variables directly for one session
+
+**Windows Command Prompt**
+```cmd
+set PROVIDER=openai
+set API_KEY=sk-your-key-here
+set MODEL=gpt-4o
+ds-mcp-webui
+```
+
+**Windows PowerShell**
+```powershell
+$env:PROVIDER = "openai"
+$env:API_KEY  = "sk-your-key-here"
+$env:MODEL    = "gpt-4o"
+ds-mcp-webui
+```
+
+**macOS / Linux (bash / zsh)**
+```bash
+export PROVIDER=openai
+export API_KEY=sk-your-key-here
+export MODEL=gpt-4o
+ds-mcp-webui
+```
+
+If you run `ds-mcp-webui` or `ds-mcp-client` without any credentials
+configured, you'll get a helpful setup message pointing you at these same
+options — you can't get stuck.
+
 ## Quick start
 
 1. Copy `.env.example` to `.env`.
 2. Fill in your provider settings.
 3. Install the package.
 4. Run **`ds-mcp-webui`** (browser) or **`ds-mcp-client`** (terminal) to chat.
+
+> The examples below use `export …` (bash/zsh syntax). On **Windows**, use
+> `set …` in Command Prompt or `$env:… = "…"` in PowerShell — see
+> [First-time setup](#first-time-setup-all-platforms) above, or just run
+> `ds-mcp-webui --init-env` and edit the generated `.env` file.
 
 ### OpenAI
 

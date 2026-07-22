@@ -66,6 +66,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "ds_mcp_server.web" = ["static/*"]
+"ds_mcp_server.resources" = ["env.template"]
 
 [tool.setuptools_scm]
 # Version is derived from the latest git tag (e.g. tag "v0.2.0" -> version "0.2.0").

@@ -67,7 +67,20 @@ def chat() -> None:
         ),
     )
     parser.add_argument("--model", "-m", default=None, help="Model name override.")
+    parser.add_argument(
+        "--init-env", action="store_true",
+        help="Write a starter .env file to the current directory and exit.",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing .env when used with --init-env.",
+    )
     args = parser.parse_args()
+
+    if args.init_env:
+        from ds_mcp_server.env_setup import run_init_env
+        import sys as _sys
+        _sys.exit(run_init_env(argv_force=args.force))
 
     try:
         from dotenv import load_dotenv
@@ -78,6 +91,14 @@ def chat() -> None:
                 break
     except ImportError:
         pass
+
+    # Give pip-installed Windows users a friendly message rather than the
+    # cryptic "API_KEY not set" the provider modules would emit.
+    from ds_mcp_server.env_setup import credentials_look_missing, print_setup_hint
+    if not args.provider and credentials_look_missing():
+        print_setup_hint(program="ds-mcp-client")
+        import sys as _sys
+        _sys.exit(1)
 
     provider = (
         args.provider
@@ -130,7 +151,20 @@ def webui() -> None:
         help="LLM provider (overrides the PROVIDER env var).",
     )
     parser.add_argument("--model", "-m", default=None, help="Model name override.")
+    parser.add_argument(
+        "--init-env", action="store_true",
+        help="Write a starter .env file to the current directory and exit.",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing .env when used with --init-env.",
+    )
     args = parser.parse_args()
+
+    if args.init_env:
+        from ds_mcp_server.env_setup import run_init_env
+        import sys as _sys
+        _sys.exit(run_init_env(argv_force=args.force))
 
     # Best-effort .env loading, same as the CLI chat command.
     try:
@@ -146,6 +180,13 @@ def webui() -> None:
         os.environ["PROVIDER"] = args.provider
     if args.model:
         os.environ["MODEL"] = args.model
+
+    # Show a friendly setup hint if the user hasn't configured any credentials.
+    from ds_mcp_server.env_setup import credentials_look_missing, print_setup_hint
+    if credentials_look_missing():
+        print_setup_hint(program="ds-mcp-webui")
+        import sys as _sys
+        _sys.exit(1)
 
     try:
         from ds_mcp_server.web.app import run_server
