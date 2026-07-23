@@ -241,13 +241,17 @@ async def run_multi_agent_turn(
     session: ClientSession,
     config: Any,
     user_message: str,
+    history: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """
     Run one request through the supervisor/worker team, yielding UI events.
 
-    A fresh team is built for each request (the supervisor keeps its own
-    internal history for the duration of that request). Progress events are
-    forwarded live; the final synthesised answer is yielded as a ``text`` event.
+    A fresh team is built for each request so it picks up any live config
+    changes, but the persistent ``history`` list (owned by the caller) is
+    injected into the supervisor so the team remembers earlier turns. The
+    supervisor appends this turn's user request and final answer to that list
+    in place. Progress events are forwarded live; the final synthesised answer
+    is yielded as a ``text`` event.
     """
     from ds_mcp_server.agents.runner import build_team
 
@@ -257,6 +261,8 @@ async def run_multi_agent_turn(
         return await call_tool_async(session, name, args)
 
     supervisor = build_team(tools, tool_runner, config)
+    if history is not None:
+        supervisor.conversation = history
     queue: asyncio.Queue = asyncio.Queue()
     supervisor.on_event = lambda e: queue.put_nowait(e)
 

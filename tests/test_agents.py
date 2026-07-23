@@ -444,6 +444,75 @@ class TestSupervisor:
         answer = asyncio.run(sup.run("hi"))
         assert answer == "just a plain answer"
 
+    def test_remembers_turns_across_runs(self):
+        # Two separate run() calls: the second must see the first turn's
+        # user request and final answer seeded into the planner messages.
+        planner = FakeLLMClient(
+            [
+                _plan("done", [], final="Paris is the capital."),
+                _plan("done", [], final="It has ~2.1M people."),
+            ]
+        )
+        sup = Supervisor(planner, {}, max_rounds=2)
+
+        first = asyncio.run(sup.run("What is the capital of France?"))
+        assert first == "Paris is the capital."
+
+        second = asyncio.run(sup.run("How many people live there?"))
+        assert second == "It has ~2.1M people."
+
+        # The second completion should have been seeded with the first turn.
+        seeded = planner.calls[1]["messages"]
+        contents = [m.get("content") for m in seeded]
+        assert "What is the capital of France?" in contents
+        assert "Paris is the capital." in contents
+        assert "How many people live there?" in contents
+
+        # Persistent memory holds two clean turns (user+assistant each).
+        assert len(sup.conversation) == 4
+        roles = [m["role"] for m in sup.conversation]
+        assert roles == ["user", "assistant", "user", "assistant"]
+
+    def test_reset_history_clears_memory(self):
+        planner = FakeLLMClient(
+            [
+                _plan("done", [], final="first"),
+                _plan("done", [], final="second"),
+            ]
+        )
+        sup = Supervisor(planner, {}, max_rounds=2)
+        asyncio.run(sup.run("one"))
+        assert sup.conversation
+        sup.reset_history()
+        assert sup.conversation == []
+        asyncio.run(sup.run("two"))
+        # After reset the second run is not seeded with the first turn.
+        seeded = planner.calls[1]["messages"]
+        contents = [m.get("content") for m in seeded]
+        assert "one" not in contents
+        assert "first" not in contents
+
+    def test_history_is_trimmed_to_window(self):
+        planner = FakeLLMClient([_plan("done", [], final=f"a{i}") for i in range(5)])
+        sup = Supervisor(planner, {}, max_rounds=1, max_history_messages=4)
+        for i in range(5):
+            asyncio.run(sup.run(f"q{i}"))
+        # Window keeps only the last 2 turns (4 messages).
+        assert len(sup.conversation) == 4
+        assert sup.conversation[0]["content"] == "q3"
+        assert sup.conversation[-1]["content"] == "a4"
+
+    def test_injected_conversation_list_is_mutated_in_place(self):
+        # Mirrors how the web UI persists history: an external list is assigned
+        # to supervisor.conversation and must accumulate turns.
+        planner = FakeLLMClient([_plan("done", [], final="done1")])
+        sup = Supervisor(planner, {}, max_rounds=1)
+        external: list = []
+        sup.conversation = external
+        asyncio.run(sup.run("hello"))
+        assert external == sup.conversation
+        assert len(external) == 2
+
 
 # ---------------------------------------------------------------------------
 # build_team wiring + config

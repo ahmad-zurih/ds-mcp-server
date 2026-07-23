@@ -630,6 +630,46 @@ def test_run_multi_agent_turn_streams_events(monkeypatch):
     assert events[-1] == {"type": "text", "text": "the final answer"}
 
 
+def test_run_multi_agent_turn_persists_history(monkeypatch):
+    import ds_mcp_server.agents.runner as runner_mod
+
+    async def fake_list_tools(session):
+        return []
+
+    class _MemorySupervisor:
+        """Records each turn into self.conversation, like the real Supervisor."""
+
+        def __init__(self):
+            self.on_event = lambda e: None
+            self.conversation = []
+
+        async def run(self, message):
+            seen_before = len(self.conversation)
+            self.conversation.append({"role": "user", "content": message})
+            self.conversation.append({"role": "assistant", "content": f"re:{message}"})
+            return f"answer for {message} (had {seen_before} prior msgs)"
+
+    monkeypatch.setattr(chat_mod, "list_tools_async", fake_list_tools)
+    monkeypatch.setattr(runner_mod, "build_team", lambda *a, **k: _MemorySupervisor())
+
+    history: list = []
+
+    async def drive(msg):
+        out = []
+        async for ev in chat_mod.run_multi_agent_turn(object(), object(), msg, history):
+            out.append(ev)
+        return out
+
+    first = asyncio.run(drive("hello"))
+    assert first[-1] == {"type": "text", "text": "answer for hello (had 0 prior msgs)"}
+    assert len(history) == 2
+
+    second = asyncio.run(drive("again"))
+    # The second turn's supervisor saw the first turn's two messages.
+    assert second[-1] == {"type": "text", "text": "answer for again (had 2 prior msgs)"}
+    assert len(history) == 4
+
+
 def test_run_multi_agent_turn_propagates_errors(monkeypatch):
     import ds_mcp_server.agents.runner as runner_mod
 

@@ -450,10 +450,12 @@ els.resetBtn.addEventListener('click', () => {
         </svg>
       </div>
       <h2>New conversation</h2>
-      <p>Note: the server still keeps this session's conversation memory. To
-      fully reset history, restart the server.</p>
+      <p>History cleared. The assistant no longer remembers earlier messages.</p>
     </div>`;
   state.currentBotMsg = null;
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'reset' }));
+  }
 });
 
 els.sidebarToggle.addEventListener('click', () => {

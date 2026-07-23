@@ -85,11 +85,18 @@ class Supervisor:
         *,
         max_rounds: int = 3,
         on_event: EventHook | None = None,
+        max_history_messages: int = 20,
     ) -> None:
         self.llm = llm
         self.workers = workers
         self.max_rounds = max(1, max_rounds)
         self.on_event = on_event or (lambda e: None)
+        # Persistent cross-turn memory: a flat list of clean user / assistant
+        # messages (the user's requests and the supervisor's final answers).
+        # Seeded into every ``run`` so the team remembers earlier turns. The
+        # noisy per-round planning JSON is deliberately kept out of this list.
+        self.conversation: list[dict[str, Any]] = []
+        self.max_history_messages = max(0, max_history_messages)
 
     def _system_prompt(self) -> str:
         lines = []
@@ -99,9 +106,26 @@ class Supervisor:
             lines.append(f"- {cat}: {desc} (tools: {tools})")
         return _SUPERVISOR_SYSTEM.format(categories="\n".join(lines))
 
+    def reset_history(self) -> None:
+        """Forget all remembered turns (used by the UI's 'new chat' button)."""
+        self.conversation.clear()
+
+    def _remember(self, user_request: str, answer: str) -> None:
+        """Append one clean turn and trim to the configured window."""
+        self.conversation.append(user_msg(user_request))
+        self.conversation.append(assistant_msg(answer))
+        if self.max_history_messages and len(self.conversation) > self.max_history_messages:
+            del self.conversation[: len(self.conversation) - self.max_history_messages]
+
     async def run(self, user_request: str) -> str:
+        answer = await self._run_turn(user_request)
+        self._remember(user_request, answer)
+        return answer
+
+    async def _run_turn(self, user_request: str) -> str:
         system = self._system_prompt()
-        messages = [user_msg(user_request)]
+        # Seed with prior clean turns so the supervisor remembers the conversation.
+        messages = list(self.conversation) + [user_msg(user_request)]
         all_results: list[WorkerResult] = []
 
         for round_no in range(1, self.max_rounds + 1):

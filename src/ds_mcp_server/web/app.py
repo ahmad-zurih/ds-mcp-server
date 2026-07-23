@@ -340,6 +340,7 @@ def create_app() -> FastAPI:
 
         openai_conv: list[dict[str, Any]] = []
         anth_messages: list[dict[str, Any]] = []
+        ma_history: list[dict[str, Any]] = []
         system_prompt = (
             "You are a helpful data science assistant with access to powerful "
             "visualization and analysis tools. When you generate a plot, tell "
@@ -400,6 +401,16 @@ def create_app() -> FastAPI:
                 except Exception:
                     await websocket.send_json({"type": "error", "message": "invalid JSON"})
                     continue
+
+                # "New chat": forget this connection's conversation memory across
+                # every mode (single-agent + multi-agent) without reconnecting.
+                if payload.get("type") == "reset" or payload.get("reset"):
+                    openai_conv.clear()
+                    anth_messages.clear()
+                    ma_history.clear()
+                    await websocket.send_json({"type": "reset_ok"})
+                    continue
+
                 user_msg = (payload.get("message") or "").strip()
                 if not user_msg:
                     continue
@@ -411,7 +422,7 @@ def create_app() -> FastAPI:
                     try:
                         if bridge.settings.get("multi_agent"):
                             gen = run_multi_agent_turn(
-                                bridge.session, _agent_config(bridge), user_msg
+                                bridge.session, _agent_config(bridge), user_msg, ma_history
                             )
                         elif provider == "anthropic":
                             anth_messages.append({"role": "user", "content": user_msg})
