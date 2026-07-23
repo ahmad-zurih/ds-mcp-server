@@ -82,8 +82,16 @@ from ds_mcp_server._tools.plot_static import (
 
 from ds_mcp_server._tools.web_tools import (
     fetch_webpage_impl,
+    screenshot_multi_impl,
     screenshot_webpage_impl,
     search_web_impl,
+)
+from ds_mcp_server._tools.research_tools import (
+    arxiv_search_impl,
+    github_read_file_impl,
+    github_search_impl,
+    wikipedia_impl,
+    youtube_transcript_impl,
 )
 
 # System tools are imported lazily below only if opt-in is set — see _system_tools_enabled().
@@ -590,3 +598,83 @@ def screenshot_webpage(url: str, save_path: str | None = None) -> str:
     Requires playwright: pip install playwright && playwright install chromium
     """
     return screenshot_webpage_impl(url, save_path)
+
+
+# --- RESEARCH / REFERENCE TOOLS ---
+
+
+@mcp.tool()
+def arxiv_search(query: str, max_results: int = 5) -> str:
+    """
+    Search arXiv for research papers matching the query.
+    Returns paper titles, authors, publication dates, abstracts, and PDF links.
+    Free API — no key required. Use for finding academic literature on any topic.
+    max_results: number of papers to return (1-20, default 5).
+    """
+    return arxiv_search_impl(query, max_results)
+
+
+@mcp.tool()
+def github_search(query: str, kind: str = "repos", max_results: int = 5) -> str:
+    """
+    Search GitHub for repositories or code matching the query.
+    kind: 'repos' (default) — returns repo names, stars, language, description;
+          'code'  — returns file paths and URLs containing the query string.
+    Rate-limited without a token (10 req/hr). Set GITHUB_TOKEN env var for 30/min.
+    max_results: 1-30, default 5.
+    """
+    return github_search_impl(query, kind, max_results)
+
+
+@mcp.tool()
+def github_read_file(url_or_path: str, ref: str = "HEAD") -> str:
+    """
+    Read the content of a file from any public GitHub repository.
+    url_or_path accepts:
+      • GitHub blob URL:   https://github.com/owner/repo/blob/main/path/to/file.py
+      • Raw URL:           https://raw.githubusercontent.com/owner/repo/main/path/file.py
+      • Shorthand:         owner/repo/path/to/file  (ref param sets branch/tag/SHA)
+    Returns decoded file content, truncated at 8 000 characters.
+    Set GITHUB_TOKEN env var to avoid rate limits.
+    """
+    return github_read_file_impl(url_or_path, ref)
+
+
+@mcp.tool()
+def wikipedia(title: str, lang: str = "en", full: bool = False) -> str:
+    """
+    Fetch a Wikipedia article by title and return it as clean plain text.
+    title: article title (e.g. 'Python (programming language)').
+    lang:  ISO language code (default 'en'; use 'de', 'fr', 'es', etc. for other languages).
+    full:  if True, return the full article extract (up to 6 000 chars); default is summary.
+    Free API — no key required.
+    """
+    return wikipedia_impl(title, lang, full)
+
+
+@mcp.tool()
+def youtube_transcript(
+    url_or_id: str, languages: str = "en", max_chars: int = 8000
+) -> str:
+    """
+    Fetch the transcript of a YouTube video as readable, timestamped plain text.
+    url_or_id: full YouTube URL (https://www.youtube.com/watch?v=...) or 11-char video ID.
+    languages: comma-separated ISO language codes in preference order, e.g. 'en,de,fr'.
+    max_chars: truncate output at this many characters (default 8 000).
+    Requires: pip install 'ds-mcp-server[research]'  (youtube-transcript-api).
+    """
+    return youtube_transcript_impl(url_or_id, languages, max_chars)
+
+
+@mcp.tool()
+def screenshot_webpages(
+    urls: list[str], layout: str = "side-by-side", save_dir: str | None = None
+) -> str:
+    """
+    Screenshot multiple webpages and stitch them into a single composite PNG.
+    urls:     list of URLs to capture (up to 6).
+    layout:   'side-by-side' (horizontal, default) or 'vertical' (stacked).
+    save_dir: directory for output files; auto-generated if omitted.
+    Requires playwright: pip install playwright && playwright install chromium
+    """
+    return screenshot_multi_impl(urls, layout, save_dir)

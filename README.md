@@ -362,9 +362,25 @@ Only registered when `DS_MCP_ENABLE_SYSTEM_TOOLS=1` (or `--enable-system-tools`)
 
 ### Web tools
 
-- `search_web`
-- `fetch_webpage`
-- `screenshot_webpage`
+- `search_web` — DuckDuckGo search, no key required
+- `fetch_webpage` — fetch & parse a URL to structured text (title, headings, text)
+- `screenshot_webpage` — single-page Chromium screenshot (requires `playwright`)
+- `screenshot_webpages` — screenshot **multiple** pages and stitch into one composite PNG
+
+### Research & reference tools
+
+No API keys needed for any of these (arXiv, Wikipedia are fully open; YouTube transcript
+uses the public caption API; GitHub is rate-limited without a token).
+
+| Tool | What it does |
+|------|-------------|
+| `arxiv_search` | Search arXiv; returns titles, authors, dates, abstracts, PDF links |
+| `github_search` | Search GitHub repos (`kind="repos"`) or code (`kind="code"`) |
+| `github_read_file` | Read any file from a public repo — accepts blob URLs, raw URLs, or `owner/repo/path` shorthand |
+| `wikipedia` | Fetch a Wikipedia article as clean plain text; optional `full=True` for extended extract |
+| `youtube_transcript` | Get a video's transcript with minute-level timestamps; requires `pip install 'ds-mcp-server[research]'` |
+
+**Optional token**: set `GITHUB_TOKEN` to avoid GitHub's 10 req/hr anonymous rate limit (raises to 30/min).
 
 ## Requirements
 
@@ -375,5 +391,6 @@ Only registered when `DS_MCP_ENABLE_SYSTEM_TOOLS=1` (or `--enable-system-tools`)
 - `pingouin`, `statsmodels`
 - `beautifulsoup4`, `ddgs`
 - `openai`
-- `anthropic` (optional)
-- `playwright` (optional, for screenshots)
+- `anthropic` (optional — `pip install 'ds-mcp-server[anthropic]'`)
+- `playwright` (optional — `pip install 'ds-mcp-server[playwright]'` + `playwright install chromium`, for screenshots)
+- `youtube-transcript-api` (optional — `pip install 'ds-mcp-server[research]'`, for `youtube_transcript` tool)

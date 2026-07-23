@@ -174,3 +174,103 @@ def screenshot_webpage_impl(url: str, save_path: str | None = None) -> str:
         return "Screenshot saved to: " + save_path
     except Exception as e:
         return "Screenshot error: " + str(e)
+
+
+def screenshot_multi_impl(
+    urls: list[str],
+    layout: str = "side-by-side",
+    save_dir: str | None = None,
+) -> str:
+    """
+    Screenshot multiple webpages and stitch them into a single composite PNG.
+
+    urls:     list of URLs to capture (capped at 6).
+    layout:   'side-by-side' (horizontal, default) or 'vertical' (stacked).
+    save_dir: directory for output files; auto-generated if omitted.
+
+    Requires playwright (pip install playwright && playwright install chromium).
+    Uses Pillow for stitching if available; falls back to returning individual paths.
+    """
+    if not urls:
+        return "No URLs provided."
+
+    try:
+        from playwright.sync_api import TimeoutError as PWTimeout
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return (
+            "playwright not installed. Run:\n"
+            "  pip install playwright\n"
+            "  playwright install chromium"
+        )
+
+    out_dir = save_dir or os.path.join(
+        os.path.expanduser("~"), "mcp-server-example", "screenshots"
+    )
+    os.makedirs(out_dir, exist_ok=True)
+
+    screenshots: list[str] = []
+    errors: list[str] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        for url in urls[:6]:
+            safe = re.sub(r"[^\w.-]", "_", url.split("//")[-1][:55]).strip("_")
+            path = os.path.join(out_dir, f"multi_{safe}.png")
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 800})
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                    page.wait_for_timeout(1200)
+                except PWTimeout:
+                    pass
+                page.screenshot(path=path, full_page=False)
+                page.close()
+                screenshots.append(path)
+            except Exception as exc:
+                errors.append(f"{url}: {exc}")
+        browser.close()
+
+    if not screenshots:
+        return "All screenshots failed: " + "; ".join(errors)
+
+    # Stitch with Pillow when available
+    try:
+        from PIL import Image  # type: ignore[import]
+
+        images = [Image.open(p) for p in screenshots]
+        if layout == "vertical":
+            total_h = sum(img.height for img in images)
+            max_w = max(img.width for img in images)
+            canvas = Image.new("RGB", (max_w, total_h), (28, 28, 38))
+            y = 0
+            for img in images:
+                canvas.paste(img, (0, y))
+                y += img.height
+        else:  # side-by-side
+            total_w = sum(img.width for img in images)
+            max_h = max(img.height for img in images)
+            canvas = Image.new("RGB", (total_w, max_h), (28, 28, 38))
+            x = 0
+            for img in images:
+                canvas.paste(img, (x, 0))
+                x += img.width
+        composite = os.path.join(out_dir, "multi_composite.png")
+        canvas.save(composite)
+        result = (
+            f"Composite screenshot saved to: {composite}\n"
+            f"Layout: {layout}, {len(screenshots)} page(s)\n"
+        )
+        if errors:
+            result += "Failures: " + "; ".join(errors) + "\n"
+        result += "Individual screenshots:\n" + "\n".join(
+            f"  {p}" for p in screenshots
+        )
+        return result
+    except ImportError:
+        # Pillow not installed — return paths to individual screenshots
+        result = f"{len(screenshots)} screenshot(s) saved:\n" + "\n".join(
+            f"  {p}" for p in screenshots
+        )
+        if errors:
+            result += "\nFailures: " + "; ".join(errors)
+        return result
