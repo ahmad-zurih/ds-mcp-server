@@ -57,25 +57,31 @@ function dismissWelcome() {
   if (w) w.remove();
 }
 
-// Minimal safe markdown-ish renderer: escape HTML, then apply code / bold /
-// italic / inline-code / newlines. Deliberately tiny — no external deps.
+// Render markdown safely: use marked.js when available, fall back to a simple
+// inline formatter so the UI still works if the library fails to load.
 function renderText(raw) {
-  const escaped = raw
+  // Strip model reasoning blocks (<think>...</think>) that some models emit.
+  let src = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trimStart();
+  // Also drop a stray unclosed <think> ... to end-of-text.
+  src = src.replace(/<think>[\s\S]*$/i, '').trimStart();
+
+  if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+    return DOMPurify.sanitize(
+      marked.parse(src, { breaks: true, gfm: true }),
+      { USE_PROFILES: { html: true } }
+    );
+  }
+  // Fallback: minimal renderer (no tables / headings, but always safe)
+  const escaped = src
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-
   let html = escaped;
-  // triple-backtick code blocks first
   html = html.replace(/```([\s\S]*?)```/g, (_, code) =>
     `<pre><code>${code.replace(/^\n+|\n+$/g, '')}</code></pre>`);
-  // inline code
   html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  // bold **text**
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  // italic *text*
   html = html.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-  // paragraphs / line breaks
   html = html.split(/\n{2,}/).map(chunk => `<p>${chunk.replace(/\n/g, '<br/>')}</p>`).join('');
   return html;
 }

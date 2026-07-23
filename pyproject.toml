@@ -67,7 +67,7 @@ ds-mcp-webui = "ds_mcp_server.cli:webui"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"ds_mcp_server.web" = ["static/*"]
+"ds_mcp_server.web" = ["static/*", "static/**/*"]
 "ds_mcp_server.resources" = ["env.template"]
 
 [tool.setuptools_scm]
