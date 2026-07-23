@@ -68,6 +68,41 @@ def chat() -> None:
     )
     parser.add_argument("--model", "-m", default=None, help="Model name override.")
     parser.add_argument(
+        "--multi-agent", action="store_true",
+        help=(
+            "Use the supervisor/worker multi-agent architecture instead of a "
+            "single LLM. A planner LLM (no tools) delegates category-scoped "
+            "subtasks to worker LLMs. Lets the system scale as tools grow."
+        ),
+    )
+    parser.add_argument(
+        "--planner-model", default=None,
+        help="Model for the supervisor/planner (multi-agent mode). Falls back to "
+             "PLANNER_MODEL env var, then --model / MODEL.",
+    )
+    parser.add_argument(
+        "--worker-model", default=None,
+        help="Model for the worker agents (multi-agent mode). Use a cheaper model "
+             "here. Falls back to WORKER_MODEL env var, then --model / MODEL.",
+    )
+    parser.add_argument(
+        "--max-rounds", type=int, default=None,
+        help="Max supervisor planning rounds in multi-agent mode (default 3).",
+    )
+    parser.add_argument(
+        "--max-worker-retries", type=int, default=None,
+        help="How many times a worker retries a failed task in multi-agent mode "
+             "(default 2).",
+    )
+    parser.add_argument(
+        "--max-worker-steps", type=int, default=None,
+        help="Max tool-call iterations inside one worker task (default 6).",
+    )
+    parser.add_argument(
+        "--prompt", default=None,
+        help="Run a single request non-interactively and exit.",
+    )
+    parser.add_argument(
         "--init-env", action="store_true",
         help="Write a starter .env file to the current directory and exit.",
     )
@@ -105,6 +140,20 @@ def chat() -> None:
         or os.environ.get("PROVIDER", "").lower()
         or _detect_provider()
     )
+
+    if args.multi_agent:
+        from ds_mcp_server.agents.runner import config_from_env, run_multi_agent
+
+        config = config_from_env(
+            provider=provider,
+            planner_model=args.planner_model or args.model,
+            worker_model=args.worker_model or args.model,
+            max_rounds=args.max_rounds,
+            max_worker_retries=args.max_worker_retries,
+            max_worker_steps=args.max_worker_steps,
+        )
+        run_multi_agent(config, request=args.prompt)
+        return
 
     if provider == "anthropic":
         from ds_mcp_server.client.anthropic_client import run_chat

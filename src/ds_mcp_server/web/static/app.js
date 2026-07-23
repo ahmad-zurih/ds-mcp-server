@@ -24,6 +24,18 @@ const els = {
   settingsNote: $('#settings-note'),
   toggleSystemTools: $('#toggle-system-tools'),
   toggleUnrestrictedExec: $('#toggle-unrestricted-exec'),
+  // Multi-agent
+  toggleMultiAgent: $('#toggle-multi-agent'),
+  toggleMultiAgentModal: $('#toggle-multi-agent-modal'),
+  maRow: $('#ma-row'),
+  maBadge: $('#ma-badge'),
+  maSub: $('#ma-sub'),
+  agentFields: $('#agent-fields'),
+  cfgPlannerModel: $('#cfg-planner-model'),
+  cfgWorkerModel: $('#cfg-worker-model'),
+  cfgMaxRounds: $('#cfg-max-rounds'),
+  cfgMaxRetries: $('#cfg-max-retries'),
+  cfgMaxSteps: $('#cfg-max-steps'),
 };
 
 const state = {
@@ -31,10 +43,21 @@ const state = {
   ready: false,
   busy: false,
   tools: [],
-  currentBotMsg: null, // {body, chipsRow, textEl}
+  currentBotMsg: null, // {body, chipsRow, agentRow, textEl}
+  multiAgent: false,
+  plannerModel: null,
+  workerModel: null,
+  agentConfig: {},
 };
 
 // ---------- helpers ----------
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function setStatus(kind, label) {
   els.statusPill.className = 'pill pill--status status-' + kind;
   els.statusPill.innerHTML = '<span class="dot"></span>' + label;
@@ -121,12 +144,87 @@ function addMessage(role, opts = {}) {
 function ensureBotMessage() {
   if (!state.currentBotMsg) {
     const parts = addMessage('bot');
+    parts.agentRow = document.createElement('div');
+    parts.agentRow.className = 'agent-stream';
+    parts.content.parentNode.insertBefore(parts.agentRow, parts.content);
     parts.chipsRow = document.createElement('div');
     parts.chipsRow.className = 'tool-chips';
     parts.content.parentNode.insertBefore(parts.chipsRow, parts.content);
+    parts.lastWorkerNode = null;
     state.currentBotMsg = parts;
   }
   return state.currentBotMsg;
+}
+
+// ---------- Multi-agent event rendering ----------
+function addPlan(ev) {
+  const bot = ensureBotMessage();
+  const card = document.createElement('div');
+  card.className = 'agent-plan';
+  const tasks = (ev.tasks || [])
+    .map(
+      (t) =>
+        `<li><span class="cat-badge">${escapeHtml(t.category || '?')}</span>` +
+        `<span>${escapeHtml(t.task || '')}</span></li>`
+    )
+    .join('');
+  const statusCls = ev.status === 'done' ? 'done' : '';
+  const taskCount = (ev.tasks || []).length;
+  const delegateLabel = taskCount
+    ? `<div class="agent-delegate">Delegating ${taskCount} task${taskCount > 1 ? 's' : ''} to workers:</div>`
+    : '';
+  card.innerHTML = `
+    <div class="agent-plan-head">
+      <span class="agent-plan-icon">🧭</span>
+      <span class="agent-plan-title">Supervisor · round ${escapeHtml(ev.round)}</span>
+      <span class="agent-plan-status ${statusCls}">${escapeHtml(ev.status || '')}</span>
+    </div>
+    ${ev.reasoning ? `<div class="agent-reason">${escapeHtml(ev.reasoning)}</div>` : ''}
+    ${delegateLabel}
+    ${taskCount ? `<ul class="agent-tasks">${tasks}</ul>` : ''}`;
+  bot.agentRow.appendChild(card);
+  scrollToBottom();
+}
+
+function addWorkerStart(ev) {
+  const bot = ensureBotMessage();
+  const node = document.createElement('div');
+  node.className = 'agent-worker running';
+  node.innerHTML = `
+    <span class="agent-worker-spin"></span>
+    <span class="cat-badge">${escapeHtml(ev.category || '?')}</span>
+    <span class="agent-worker-task">${escapeHtml(ev.task || '')}</span>`;
+  bot.agentRow.appendChild(node);
+  // Tasks are dispatched sequentially, so the most recent start pairs with
+  // the next result.
+  bot.lastWorkerNode = node;
+  scrollToBottom();
+}
+
+function addWorkerResult(ev) {
+  const bot = ensureBotMessage();
+  const node = bot.lastWorkerNode;
+  if (!node) return;
+  const taskEl = node.querySelector('.agent-worker-task');
+  const taskText = taskEl ? taskEl.textContent : '';
+  const icon = ev.success ? '✓' : '✗';
+  const bits = [];
+  if ((ev.tool_calls || []).length) bits.push(ev.tool_calls.join(', '));
+  if (ev.attempts && ev.attempts > 1) bits.push(`${ev.attempts} attempts`);
+  node.className = 'agent-worker ' + (ev.success ? 'ok' : 'failed');
+  node.innerHTML = `
+    <span class="agent-worker-icon">${icon}</span>
+    <span class="cat-badge">${escapeHtml(ev.category || '?')}</span>
+    <span class="agent-worker-task">${escapeHtml(taskText)}</span>
+    ${bits.length ? `<span class="agent-worker-meta">${escapeHtml(bits.join(' · '))}</span>` : ''}`;
+  if (!ev.success && ev.error) {
+    const err = document.createElement('div');
+    err.className = 'agent-worker-err';
+    err.textContent = ev.error;
+    node.appendChild(err);
+  }
+  bot.lastWorkerNode = null;
+  scrollToBottom();
 }
 
 function addToolChip(name) {
@@ -190,6 +288,15 @@ function connect() {
       case 'tool_result':
         if (data.plot) addPlot(data.plot);
         break;
+      case 'plan':
+        addPlan(data);
+        break;
+      case 'worker_start':
+        addWorkerStart(data);
+        break;
+      case 'worker_result':
+        addWorkerResult(data);
+        break;
       case 'text':
         addAssistantText(data.text);
         break;
@@ -230,9 +337,51 @@ async function loadConfig() {
     els.modelPill.textContent = `model · ${cfg.model}`;
     state.tools = cfg.tools || [];
     renderTools(state.tools);
+    state.plannerModel = cfg.planner_model || null;
+    state.workerModel = cfg.worker_model || null;
+    if (cfg.agent_config) state.agentConfig = cfg.agent_config;
+    updateMultiAgentUI(!!cfg.multi_agent);
   } catch (e) {
     els.providerPill.textContent = 'provider · ?';
     els.modelPill.textContent = 'model · ?';
+  }
+}
+
+// ---------- Multi-agent toggle ----------
+function updateMultiAgentUI(on) {
+  state.multiAgent = on;
+  els.toggleMultiAgent.checked = on;
+  if (els.toggleMultiAgentModal) els.toggleMultiAgentModal.checked = on;
+  document.body.classList.toggle('multi-agent-on', on);
+
+  els.maBadge.textContent = on ? 'on' : 'off';
+  els.maBadge.className = 'ma-badge ' + (on ? 'ma-badge--on' : 'ma-badge--off');
+
+  const planner = state.agentConfig.planner_model || state.plannerModel || '?';
+  const worker = state.agentConfig.worker_model || state.workerModel || '?';
+  els.maSub.textContent = on
+    ? `supervisor: ${planner} · workers: ${worker}`
+    : 'single model handles everything';
+  if (els.agentFields) els.agentFields.classList.toggle('is-disabled', !on);
+}
+
+async function setMultiAgent(on) {
+  els.toggleMultiAgent.disabled = true;
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: { multi_agent: on } }),
+    });
+    const data = await r.json();
+    if (data && data.settings) settings.current = data.settings;
+    if (data && data.agent_config) state.agentConfig = data.agent_config;
+    updateMultiAgentUI(on);
+  } catch (e) {
+    // Revert the checkbox if the request failed.
+    updateMultiAgentUI(state.multiAgent);
+  } finally {
+    els.toggleMultiAgent.disabled = false;
   }
 }
 
@@ -311,14 +460,27 @@ els.sidebarToggle.addEventListener('click', () => {
   document.body.classList.toggle('sidebar-collapsed');
 });
 
+els.toggleMultiAgent.addEventListener('change', () => {
+  setMultiAgent(els.toggleMultiAgent.checked);
+});
+
 // ---------- Settings modal ----------
-const settings = { current: { system_tools: false, unrestricted_exec: false } };
+const settings = { current: { system_tools: false, unrestricted_exec: false, multi_agent: false } };
 
 function setNote(kind, text) {
   if (!text) { els.settingsNote.hidden = true; els.settingsNote.textContent = ''; return; }
   els.settingsNote.hidden = false;
   els.settingsNote.className = 'setting-note ' + (kind || '');
   els.settingsNote.textContent = text;
+}
+
+function fillAgentFields(cfg) {
+  if (!cfg) return;
+  els.cfgPlannerModel.value = cfg.planner_model || '';
+  els.cfgWorkerModel.value = cfg.worker_model || '';
+  els.cfgMaxRounds.value = cfg.max_rounds != null ? cfg.max_rounds : '';
+  els.cfgMaxRetries.value = cfg.max_worker_retries != null ? cfg.max_worker_retries : '';
+  els.cfgMaxSteps.value = cfg.max_worker_steps != null ? cfg.max_worker_steps : '';
 }
 
 async function loadSettings() {
@@ -328,6 +490,16 @@ async function loadSettings() {
     settings.current = data.settings || settings.current;
     els.toggleSystemTools.checked = !!settings.current.system_tools;
     els.toggleUnrestrictedExec.checked = !!settings.current.unrestricted_exec;
+    if (els.toggleMultiAgentModal) {
+      els.toggleMultiAgentModal.checked = !!settings.current.multi_agent;
+    }
+    if (data.agent_config) {
+      state.agentConfig = data.agent_config;
+      fillAgentFields(data.agent_config);
+    }
+    if (els.agentFields) {
+      els.agentFields.classList.toggle('is-disabled', !settings.current.multi_agent);
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -339,25 +511,46 @@ function openSettings() {
 function closeSettings() { els.settingsModal.hidden = true; }
 
 async function applySettings() {
-  const proposed = {
+  const proposedSettings = {
     system_tools: els.toggleSystemTools.checked,
     unrestricted_exec: els.toggleUnrestrictedExec.checked,
+    multi_agent: els.toggleMultiAgentModal ? els.toggleMultiAgentModal.checked : state.multiAgent,
   };
-  const cur = settings.current;
-  const changed = proposed.system_tools !== cur.system_tools ||
-                  proposed.unrestricted_exec !== cur.unrestricted_exec;
-  if (!changed) { closeSettings(); return; }
+  const proposedAgent = {
+    planner_model: els.cfgPlannerModel.value.trim(),
+    worker_model: els.cfgWorkerModel.value.trim(),
+    max_rounds: parseInt(els.cfgMaxRounds.value, 10),
+    max_worker_retries: parseInt(els.cfgMaxRetries.value, 10),
+    max_worker_steps: parseInt(els.cfgMaxSteps.value, 10),
+  };
+  // Drop empty/NaN fields so we don't overwrite with junk.
+  Object.keys(proposedAgent).forEach((k) => {
+    const v = proposedAgent[k];
+    if (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v))) {
+      delete proposedAgent[k];
+    }
+  });
 
-  els.settingsApply.disabled = true;
-  els.toggleSystemTools.disabled = true;
-  els.toggleUnrestrictedExec.disabled = true;
-  setNote('busy', 'Restarting MCP server with new settings…');
+  const cur = settings.current;
+  const dangerChanged =
+    proposedSettings.system_tools !== cur.system_tools ||
+    proposedSettings.unrestricted_exec !== cur.unrestricted_exec;
+
+  const controls = [
+    els.settingsApply, els.toggleSystemTools, els.toggleUnrestrictedExec,
+    els.toggleMultiAgentModal, els.cfgPlannerModel, els.cfgWorkerModel,
+    els.cfgMaxRounds, els.cfgMaxRetries, els.cfgMaxSteps,
+  ];
+  controls.forEach((c) => { if (c) c.disabled = true; });
+  setNote('busy', dangerChanged
+    ? 'Restarting MCP server with new settings…'
+    : 'Saving settings…');
 
   try {
     const r = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: proposed }),
+      body: JSON.stringify({ settings: proposedSettings, agent_config: proposedAgent }),
     });
     const data = await r.json();
     if (!r.ok) {
@@ -365,27 +558,39 @@ async function applySettings() {
       return;
     }
     settings.current = data.settings;
+    if (data.agent_config) {
+      state.agentConfig = data.agent_config;
+      fillAgentFields(data.agent_config);
+    }
     if (Array.isArray(data.tools)) {
       state.tools = data.tools;
       renderTools(state.tools);
     }
+    // Sync the sidebar multi-agent indicator with the saved state.
+    updateMultiAgentUI(!!data.settings.multi_agent);
+
     const enabled = [];
     if (data.settings.system_tools) enabled.push('system tools');
     if (data.settings.unrestricted_exec) enabled.push('unrestricted exec');
-    setNote(
-      'success',
-      enabled.length
-        ? 'Applied. Now enabled: ' + enabled.join(', ') + '.'
-        : 'Applied. Sandbox is fully on.',
-    );
+    let msg = 'Settings saved.';
+    if (data.settings.multi_agent) msg += ' Multi-agent is ON.';
+    if (enabled.length) msg += ' Enabled: ' + enabled.join(', ') + '.';
+    setNote('success', msg);
     setTimeout(closeSettings, 900);
   } catch (e) {
     setNote('error', 'Network error: ' + e.message);
   } finally {
-    els.settingsApply.disabled = false;
-    els.toggleSystemTools.disabled = false;
-    els.toggleUnrestrictedExec.disabled = false;
+    controls.forEach((c) => { if (c) c.disabled = false; });
   }
+}
+
+// Keep the modal's agent-config fields enabled/disabled with its toggle.
+if (els.toggleMultiAgentModal) {
+  els.toggleMultiAgentModal.addEventListener('change', () => {
+    if (els.agentFields) {
+      els.agentFields.classList.toggle('is-disabled', !els.toggleMultiAgentModal.checked);
+    }
+  });
 }
 
 els.settingsBtn.addEventListener('click', openSettings);

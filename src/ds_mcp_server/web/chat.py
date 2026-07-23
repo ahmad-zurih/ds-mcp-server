@@ -14,6 +14,7 @@ The websocket layer forwards these as JSON messages to the browser.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -173,3 +174,114 @@ async def run_anthropic_turn(
                 {"type": "tool_result", "tool_use_id": block.id, "content": result}
             )
         messages.append({"role": "user", "content": tool_results})
+
+
+# ---------------------------------------------------------------------------
+# Multi-agent provider (supervisor + specialist workers)
+# ---------------------------------------------------------------------------
+
+
+def _agent_event_to_ui(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Translate a supervisor/worker progress event into websocket UI events.
+
+    The ``final`` event is intentionally dropped here; the caller yields the
+    supervisor's return value as the single authoritative ``text`` event.
+    """
+    etype = event.get("type")
+    out: list[dict[str, Any]] = []
+    if etype == "plan":
+        out.append(
+            {
+                "type": "plan",
+                "round": event.get("round"),
+                "reasoning": event.get("reasoning", ""),
+                "status": event.get("status", ""),
+                "tasks": event.get("tasks") or [],
+            }
+        )
+    elif etype == "worker_start":
+        out.append(
+            {
+                "type": "worker_start",
+                "round": event.get("round"),
+                "category": event.get("category"),
+                "task": event.get("task"),
+            }
+        )
+    elif etype == "worker_result":
+        out.append(
+            {
+                "type": "worker_result",
+                "round": event.get("round"),
+                "category": event.get("category"),
+                "success": bool(event.get("success")),
+                "attempts": event.get("attempts"),
+                "tool_calls": event.get("tool_calls") or [],
+                "error": event.get("error", ""),
+            }
+        )
+        # Surface any plots/artifacts the worker produced so the UI renders them.
+        for art in event.get("artifacts") or []:
+            path = art.get("path")
+            if not path:
+                continue
+            out.append(
+                {
+                    "type": "tool_result",
+                    "name": event.get("category", "worker"),
+                    "text": "",
+                    "plot": {"path": path, "kind": art.get("kind", "image"), "code": ""},
+                }
+            )
+    return out
+
+
+async def run_multi_agent_turn(
+    session: ClientSession,
+    config: Any,
+    user_message: str,
+) -> AsyncIterator[dict[str, Any]]:
+    """
+    Run one request through the supervisor/worker team, yielding UI events.
+
+    A fresh team is built for each request (the supervisor keeps its own
+    internal history for the duration of that request). Progress events are
+    forwarded live; the final synthesised answer is yielded as a ``text`` event.
+    """
+    from ds_mcp_server.agents.runner import build_team
+
+    tools = await list_tools_async(session)
+
+    async def tool_runner(name: str, args: dict) -> str:
+        return await call_tool_async(session, name, args)
+
+    supervisor = build_team(tools, tool_runner, config)
+    queue: asyncio.Queue = asyncio.Queue()
+    supervisor.on_event = lambda e: queue.put_nowait(e)
+
+    run_task = asyncio.create_task(supervisor.run(user_message))
+    try:
+        while True:
+            getter = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {getter, run_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if getter in done:
+                for ui in _agent_event_to_ui(getter.result()):
+                    yield ui
+            else:
+                getter.cancel()
+            if run_task in done:
+                # Drain anything the supervisor emitted just before finishing.
+                while not queue.empty():
+                    for ui in _agent_event_to_ui(queue.get_nowait()):
+                        yield ui
+                break
+        final = run_task.result()
+    except BaseException:
+        run_task.cancel()
+        raise
+
+    if final:
+        yield {"type": "text", "text": final}

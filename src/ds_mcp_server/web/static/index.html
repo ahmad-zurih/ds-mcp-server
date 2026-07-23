@@ -31,6 +31,20 @@
       <div class="pill pill--status" id="status-pill">
         <span class="dot"></span>connecting
       </div>
+
+      <div class="ma-row" id="ma-row" title="Route each request through a supervisor that plans and delegates to specialist worker agents (one per tool category). No single model sees every tool.">
+        <div class="ma-info">
+          <div class="ma-title">
+            Multi-agent
+            <span class="ma-badge ma-badge--off" id="ma-badge">off</span>
+          </div>
+          <div class="ma-sub" id="ma-sub">single model handles everything</div>
+        </div>
+        <label class="switch switch--accent">
+          <input type="checkbox" id="toggle-multi-agent" />
+          <span class="slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="sidebar-section sidebar-section--tools">
@@ -118,11 +132,69 @@
         </div>
 
         <div class="setting-note" id="settings-note" hidden></div>
+
+        <div class="settings-divider"></div>
+
+        <div class="setting-group-title">
+          Multi-agent
+          <span class="setting-group-hint">safe · no restart needed</span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">Enable multi-agent mode</div>
+            <p class="setting-desc">
+              Route each request through a <strong>supervisor</strong> that plans and
+              delegates to specialist <strong>worker</strong> agents (one per tool
+              category). No single model sees every tool. You'll see the plan and
+              each worker's progress live in the chat.
+            </p>
+          </div>
+          <label class="switch switch--accent">
+            <input type="checkbox" id="toggle-multi-agent-modal" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="agent-fields" id="agent-fields">
+          <div class="field-row">
+            <label for="cfg-planner-model">Supervisor (planner) model</label>
+            <input type="text" id="cfg-planner-model" class="cfg-input"
+                   placeholder="e.g. gpt-4o" autocomplete="off" spellcheck="false" />
+            <span class="field-hint">The stronger model that plans &amp; reviews.</span>
+          </div>
+          <div class="field-row">
+            <label for="cfg-worker-model">Worker model</label>
+            <input type="text" id="cfg-worker-model" class="cfg-input"
+                   placeholder="e.g. gpt-4o-mini" autocomplete="off" spellcheck="false" />
+            <span class="field-hint">Runs the tools — a cheaper model is fine.</span>
+          </div>
+          <div class="field-grid">
+            <div class="field-row">
+              <label for="cfg-max-rounds">Max rounds</label>
+              <input type="number" id="cfg-max-rounds" class="cfg-input cfg-num"
+                     min="1" max="20" step="1" />
+              <span class="field-hint">Supervisor re-planning rounds (1–20).</span>
+            </div>
+            <div class="field-row">
+              <label for="cfg-max-retries">Max worker retries</label>
+              <input type="number" id="cfg-max-retries" class="cfg-input cfg-num"
+                     min="0" max="10" step="1" />
+              <span class="field-hint">Retries after a failed task (0–10).</span>
+            </div>
+            <div class="field-row">
+              <label for="cfg-max-steps">Max worker steps</label>
+              <input type="number" id="cfg-max-steps" class="cfg-input cfg-num"
+                     min="1" max="30" step="1" />
+              <span class="field-hint">Tool calls per worker task (1–30).</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <footer class="modal-footer">
         <button class="ghost-btn" id="settings-cancel">Cancel</button>
-        <button class="primary-btn" id="settings-apply">Apply &amp; restart MCP</button>
+        <button class="primary-btn" id="settings-apply">Save &amp; apply</button>
       </footer>
     </div>
   </div>

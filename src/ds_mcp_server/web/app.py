@@ -27,7 +27,11 @@ from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
 from ds_mcp_server.client._base import list_tools_async
-from ds_mcp_server.web.chat import run_anthropic_turn, run_openai_turn
+from ds_mcp_server.web.chat import (
+    run_anthropic_turn,
+    run_multi_agent_turn,
+    run_openai_turn,
+)
 
 # Env vars the UI can toggle at runtime. Each toggle restarts the MCP
 # subprocess so its module-level opt-in check sees the new value.
@@ -35,6 +39,36 @@ _TOGGLEABLE_ENV = {
     "system_tools": "DS_MCP_ENABLE_SYSTEM_TOOLS",
     "unrestricted_exec": "DS_MCP_ALLOW_UNRESTRICTED_EXEC",
 }
+
+# Runtime settings that do NOT require restarting the MCP subprocess (they
+# change how the web layer orchestrates the LLMs, not which tools exist).
+_RUNTIME_ONLY = ("multi_agent",)
+
+# Editable multi-agent numeric parameters and their safe bounds.
+_AGENT_INT_BOUNDS = {
+    "max_rounds": (1, 20),
+    "max_worker_retries": (0, 10),
+    "max_worker_steps": (1, 30),
+}
+_AGENT_STR_FIELDS = ("planner_model", "worker_model")
+
+
+def _apply_agent_config(bridge: "_McpBridge", incoming: dict[str, Any]) -> None:
+    """Validate and apply editable multi-agent parameters (runtime-only)."""
+    if not isinstance(incoming, dict):
+        return
+    for field in _AGENT_STR_FIELDS:
+        if field in incoming:
+            val = str(incoming[field]).strip()
+            if val:
+                bridge.agent_config[field] = val
+    for field, (lo, hi) in _AGENT_INT_BOUNDS.items():
+        if field in incoming:
+            try:
+                val = int(incoming[field])
+            except (TypeError, ValueError):
+                continue
+            bridge.agent_config[field] = max(lo, min(hi, val))
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _ALLOWED_PLOT_EXTS = {".png", ".jpg", ".jpeg", ".svg", ".html", ".json"}
@@ -65,6 +99,27 @@ def _resolve_model(provider: str) -> str:
     return defaults.get(provider, "gpt-4o")
 
 
+def _agent_config(bridge: "_McpBridge | None" = None):
+    """Build the multi-agent AgentConfig from the bridge's live parameters.
+
+    Falls back to env-derived defaults when no bridge is supplied.
+    """
+    from ds_mcp_server.agents.runner import AgentConfig, config_from_env
+
+    provider = _resolve_provider()
+    if bridge is None:
+        return config_from_env(provider, None, None, None, None, None)
+    ac = bridge.agent_config
+    return AgentConfig(
+        provider=provider,
+        planner_model=ac["planner_model"],
+        worker_model=ac["worker_model"],
+        max_rounds=int(ac["max_rounds"]),
+        max_worker_retries=int(ac["max_worker_retries"]),
+        max_worker_steps=int(ac["max_worker_steps"]),
+    )
+
+
 class _McpBridge:
     """
     Long-lived stdio MCP session shared by all websockets on this process.
@@ -89,6 +144,20 @@ class _McpBridge:
             in ("1", "true", "yes", "on"),
             "unrestricted_exec": os.environ.get("DS_MCP_ALLOW_UNRESTRICTED_EXEC", "").strip().lower()
             in ("1", "true", "yes", "on"),
+            "multi_agent": os.environ.get("DS_MCP_MULTI_AGENT", "").strip().lower()
+            in ("1", "true", "yes", "on"),
+        }
+        # Editable multi-agent parameters (runtime-only, no MCP restart).
+        # Seeded from env / CLI defaults; the UI can override them live.
+        from ds_mcp_server.agents.runner import config_from_env
+
+        _cfg = config_from_env(_resolve_provider(), None, None, None, None, None)
+        self.agent_config: dict[str, Any] = {
+            "planner_model": _cfg.planner_model,
+            "worker_model": _cfg.worker_model,
+            "max_rounds": _cfg.max_rounds,
+            "max_worker_retries": _cfg.max_worker_retries,
+            "max_worker_steps": _cfg.max_worker_steps,
         }
 
     def _build_server_params(self):
@@ -176,15 +245,23 @@ def create_app() -> FastAPI:
     @app.get("/api/config")
     async def config() -> dict[str, Any]:
         provider = _resolve_provider()
+        cfg = _agent_config(bridge)
         return {
             "provider": provider,
             "model": _resolve_model(provider),
+            "multi_agent": bool(bridge.settings.get("multi_agent")),
+            "planner_model": cfg.planner_model,
+            "worker_model": cfg.worker_model,
+            "agent_config": dict(bridge.agent_config),
             "tools": [{"name": t["name"], "description": t["description"]} for t in bridge.tools],
         }
 
     @app.get("/api/settings")
     async def get_settings() -> dict[str, Any]:
-        return {"settings": dict(bridge.settings)}
+        return {
+            "settings": dict(bridge.settings),
+            "agent_config": dict(bridge.agent_config),
+        }
 
     @app.post("/api/settings")
     async def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
@@ -194,6 +271,15 @@ def create_app() -> FastAPI:
         Only known keys (defined in _TOGGLEABLE_ENV) are honoured.
         """
         incoming = payload.get("settings") or {}
+
+        # Runtime-only toggles: apply immediately, no MCP restart needed.
+        for key in _RUNTIME_ONLY:
+            if key in incoming:
+                bridge.settings[key] = bool(incoming[key])
+
+        # Editable multi-agent parameters: also runtime-only.
+        _apply_agent_config(bridge, payload.get("agent_config") or {})
+
         changed = False
         for key in _TOGGLEABLE_ENV:
             if key in incoming:
@@ -205,6 +291,7 @@ def create_app() -> FastAPI:
         if not changed:
             return {
                 "settings": dict(bridge.settings),
+                "agent_config": dict(bridge.agent_config),
                 "restarted": False,
                 "tools": [{"name": t["name"], "description": t["description"]} for t in bridge.tools],
             }
@@ -215,12 +302,14 @@ def create_app() -> FastAPI:
             except Exception as exc:  # noqa: BLE001
                 return JSONResponse(
                     {"error": f"MCP server failed to restart: {exc}",
-                     "settings": dict(bridge.settings)},
+                     "settings": dict(bridge.settings),
+                     "agent_config": dict(bridge.agent_config)},
                     status_code=500,
                 )
 
         return {
             "settings": dict(bridge.settings),
+            "agent_config": dict(bridge.agent_config),
             "restarted": True,
             "tools": [{"name": t["name"], "description": t["description"]} for t in bridge.tools],
         }
@@ -320,7 +409,11 @@ def create_app() -> FastAPI:
                         await websocket.send_json({"type": "error", "message": "MCP session not ready"})
                         continue
                     try:
-                        if provider == "anthropic":
+                        if bridge.settings.get("multi_agent"):
+                            gen = run_multi_agent_turn(
+                                bridge.session, _agent_config(bridge), user_msg
+                            )
+                        elif provider == "anthropic":
                             anth_messages.append({"role": "user", "content": user_msg})
                             gen = run_anthropic_turn(
                                 bridge.session, anth_client, model, system_prompt, anth_messages

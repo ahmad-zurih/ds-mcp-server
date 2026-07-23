@@ -311,6 +311,73 @@ chat through your API key.
 | `API_BASE_URL` | Sometimes | Required for `openai-compat`; optional override for Ollama, Gemini, or self-hosted endpoints. |
 | `MODEL` | No | Model override. Defaults are provider-specific. |
 
+## Multi-agent mode (supervisor + workers)
+
+By default one LLM sees every tool at once. As the tool catalogue grows this hurts
+tool-selection accuracy. **Multi-agent mode** splits the work across a team:
+
+- A **supervisor** (planner) LLM that runs **no tools**. It breaks your request
+  into small subtasks, delegates each to the right worker, reads their feedback,
+  retries or re-plans on failure, and writes the final answer.
+- One **worker** LLM per tool *category* (data, plot_interactive, plot_static,
+  stats, web, research, system). Each worker only ever sees the tools in its own
+  category, so its decision space stays small no matter how many tools exist.
+
+```bash
+# Enable it with --multi-agent
+ds-mcp-client --multi-agent
+
+# Use a strong planner and a cheaper worker model
+ds-mcp-client --multi-agent \
+  --planner-model gpt-4o \
+  --worker-model  gpt-4o-mini
+
+# Tune the iteration budgets
+ds-mcp-client --multi-agent \
+  --max-rounds 4 \            # supervisor re-planning rounds
+  --max-worker-retries 3 \   # times a worker retries a failed task
+  --max-worker-steps 8       # tool-call iterations inside one worker task
+
+# One-shot, non-interactive
+ds-mcp-client --multi-agent --prompt "Load data.csv, correlate all columns, and plot the strongest pair"
+```
+
+Everything is also configurable via environment variables:
+`PLANNER_MODEL`, `WORKER_MODEL`, `MAX_ROUNDS`, `MAX_WORKER_RETRIES`, `MAX_WORKER_STEPS`.
+
+| Knob | CLI flag | Env var | Default | Meaning |
+|------|----------|---------|---------|---------|
+| Planner model | `--planner-model` | `PLANNER_MODEL` | `MODEL` | Model for the supervisor |
+| Worker model | `--worker-model` | `WORKER_MODEL` | `MODEL` | Model for the workers (make it cheaper) |
+| Rounds | `--max-rounds` | `MAX_ROUNDS` | 3 | Supervisor planning/re-planning rounds |
+| Worker retries | `--max-worker-retries` | `MAX_WORKER_RETRIES` | 2 | Retries after a worker's first failed attempt |
+| Worker steps | `--max-worker-steps` | `MAX_WORKER_STEPS` | 6 | Tool-call iterations within one worker task |
+
+The data-exploration tools (`get_*_summary`) are automatically shared into the
+plotting and stats workers so they can inspect columns before acting.
+
+### In the web UI
+
+Multi-agent mode is also available in **`ds-mcp-webui`** — no restart or config
+edits required. There are two ways to control it:
+
+- **Sidebar toggle** — a **Multi-agent** switch with a clear **on/off** badge. When
+  it's on, the subtitle shows which supervisor/worker models are in use, and each
+  request is routed through the supervisor. You'll see the plan and each worker's
+  progress **live in the chat** (supervisor round → delegated tasks → per-worker
+  ✓/✗ with the tools used).
+- **Settings → Multi-agent** — open the ⚙ settings dialog to enable multi-agent
+  **and edit its parameters live**: the supervisor (planner) model, the worker
+  model, max rounds, max worker retries, and max worker steps. These apply
+  immediately without restarting the MCP server.
+
+Defaults come from the same `PLANNER_MODEL` / `WORKER_MODEL` / `MAX_*` env vars (or
+`MODEL`). To start the web UI with multi-agent already on, set `DS_MCP_MULTI_AGENT=1`.
+
+> Note: in multi-agent mode each message is handled as a fresh task by the
+> supervisor (it keeps its own working memory for that request), whereas the
+> single-model chat keeps a running conversation across messages.
+
 ## Available tools
 
 ### Interactive plots
