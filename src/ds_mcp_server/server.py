@@ -93,6 +93,15 @@ from ds_mcp_server._tools.research_tools import (
     wikipedia_impl,
     youtube_transcript_impl,
 )
+from ds_mcp_server._tools.document_tools import (
+    extract_tables_from_pdf_impl,
+    ocr_image_impl,
+    read_docx_impl,
+    read_excel_sheets_impl,
+    read_pdf_impl,
+    summarize_document_impl,
+)
+from ds_mcp_server._tools.profiling import profile_dataset_impl
 
 # System tools are imported lazily below only if opt-in is set — see _system_tools_enabled().
 
@@ -678,3 +687,103 @@ def screenshot_webpages(
     Requires playwright: pip install playwright && playwright install chromium
     """
     return screenshot_multi_impl(urls, layout, save_dir)
+
+
+# --- DOCUMENT / FILE-INTELLIGENCE TOOLS ---
+
+
+@mcp.tool()
+def read_pdf(
+    file_path: str,
+    pages: str | None = None,
+    include_tables: bool = False,
+) -> str:
+    """
+    Extract text from a PDF file (optionally with tables).
+    file_path:      absolute path to the .pdf file.
+    pages:          1-based page selection, e.g. "1,3,5-8"; omit for all pages.
+    include_tables: also pull tables out via pdfplumber and append them as markdown.
+    Requires: pip install 'ds-mcp-server[documents]'
+    """
+    return read_pdf_impl(file_path, pages, include_tables)
+
+
+@mcp.tool()
+def extract_tables_from_pdf(file_path: str, pages: str | None = None) -> str:
+    """
+    Extract structured tables from a PDF and return them as markdown tables.
+    file_path: absolute path to the .pdf file.
+    pages:     1-based page selection, e.g. "1,3,5-8"; omit for all pages.
+    Use read_pdf for prose; use this when you specifically need tabular data.
+    Requires: pip install 'ds-mcp-server[documents]'
+    """
+    return extract_tables_from_pdf_impl(file_path, pages)
+
+
+@mcp.tool()
+def read_docx(file_path: str) -> str:
+    """
+    Extract text (paragraphs and tables) from a Word .docx document.
+    file_path: absolute path to the .docx file.
+    Requires: pip install 'ds-mcp-server[documents]'
+    """
+    return read_docx_impl(file_path)
+
+
+@mcp.tool()
+def read_excel_sheets(file_path: str, preview_rows: int = 5) -> str:
+    """
+    List every sheet in an Excel workbook and preview the first rows of each.
+    file_path:    absolute path to the .xlsx or .xls file.
+    preview_rows: rows to preview per sheet (1-50, default 5).
+    Friendlier than load_data for multi-sheet workbooks; use load_data to
+    analyze or plot a single sheet.
+    Requires openpyxl (bundled with the documents extra).
+    """
+    return read_excel_sheets_impl(file_path, preview_rows)
+
+
+@mcp.tool()
+def ocr_image(file_path: str, lang: str = "eng") -> str:
+    """
+    Run OCR on an image (screenshot, scan, receipt or photo) and return its text.
+    file_path: absolute path to a .png/.jpg/.tiff/... image.
+    lang:      tesseract language code(s), e.g. 'eng' or 'eng+deu'.
+    Requires the system `tesseract` binary plus: pip install 'ds-mcp-server[ocr]'
+    """
+    return ocr_image_impl(file_path, lang)
+
+
+@mcp.tool()
+def summarize_document(file_path: str, max_chars: int = 12000) -> str:
+    """
+    Extract and chunk a document's text so you can summarize it.
+    Supports pdf, docx, txt, md and csv. Returns as much text as fits in
+    max_chars with an instruction to write the summary; you (the model) then
+    produce the actual summary from the returned content.
+    file_path: absolute path to the document.
+    max_chars: maximum characters of document text to return (default 12000).
+    """
+    return summarize_document_impl(file_path, max_chars)
+
+
+# --- DATASET PROFILING ---
+
+
+@mcp.tool()
+def profile_dataset(
+    data_file_path: str,
+    title: str = "Dataset Profiling Report",
+    minimal: bool = True,
+) -> str:
+    """
+    Generate a rich interactive HTML profiling report for a dataset
+    (types, distributions, missing values, correlations, warnings).
+    Great as a first look to understand a new dataset in one shot.
+    data_file_path: absolute path to a csv/tsv/xlsx/json data file.
+    title:          report title.
+    minimal:        True (default) for a fast report; False for the full,
+                    explorative report (slower on wide datasets).
+    Requires: pip install 'ds-mcp-server[profiling]'
+    """
+    return profile_dataset_impl(data_file_path, title, minimal)

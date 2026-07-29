@@ -35,6 +35,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "websockets>=12",
+    "python-multipart>=0.0.9",
 ]
 
 [project.urls]
@@ -51,11 +52,38 @@ playwright = ["playwright>=1.40"]
 web = []
 # [research] adds YouTube transcript support (arXiv/GitHub/Wikipedia use stdlib only)
 research = ["youtube-transcript-api>=0.6"]
-all = ["anthropic>=0.20", "playwright>=1.40", "youtube-transcript-api>=0.6"]
+# [documents] adds PDF / Word / Excel document-intelligence tools
+documents = [
+    "pypdf>=4.0",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+]
+# [ocr] adds image OCR (also requires the system `tesseract` binary)
+ocr = ["pytesseract>=0.3.10", "Pillow>=10.0"]
+# [profiling] adds one-shot dataset profiling reports
+profiling = ["ydata-profiling>=4.6"]
+all = [
+    "anthropic>=0.20",
+    "playwright>=1.40",
+    "youtube-transcript-api>=0.6",
+    "pypdf>=4.0",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
+    "ydata-profiling>=4.6",
+]
 dev = [
     "pytest>=7.4",
     "openpyxl>=3.1",
     "httpx>=0.27",
+    "pypdf>=4.0",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "reportlab>=4.0",
+    "Pillow>=10.0",
 ]
 
 [project.scripts]

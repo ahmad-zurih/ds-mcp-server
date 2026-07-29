@@ -15,6 +15,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "data": [
         "get_all_columns_summary",
         "get_column_summary",
+        "profile_dataset",
     ],
     "plot_interactive": [
         "plot_interactive_histogram",
@@ -56,6 +57,14 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
         "wikipedia",
         "youtube_transcript",
     ],
+    "documents": [
+        "read_pdf",
+        "extract_tables_from_pdf",
+        "read_docx",
+        "read_excel_sheets",
+        "ocr_image",
+        "summarize_document",
+    ],
     "system": [
         "run_shell_command",
         "read_file",
@@ -90,6 +99,7 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "stats": "Statistical analysis: correlation, regression, group comparison.",
     "web": "Fetch webpages, search the web, screenshot pages.",
     "research": "arXiv, GitHub, Wikipedia and YouTube transcript lookups.",
+    "documents": "Read PDFs, Word docs, Excel sheets; OCR images; summarize documents.",
     "system": "Shell/file/HTTP/background-process access (only if server enabled it).",
     "misc": "Uncategorised tools.",
 }

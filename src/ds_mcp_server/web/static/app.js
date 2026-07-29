@@ -15,6 +15,10 @@ const els = {
   toolSearch: $('#tool-search'),
   resetBtn: $('#reset-btn'),
   sidebarToggle: $('#sidebar-toggle'),
+  // File upload
+  attachBtn: $('#attach-btn'),
+  fileInput: $('#file-input'),
+  attachmentBar: $('#attachment-bar'),
   // Settings modal
   settingsBtn: $('#settings-btn'),
   settingsModal: $('#settings-modal'),
@@ -48,6 +52,7 @@ const state = {
   plannerModel: null,
   workerModel: null,
   agentConfig: {},
+  attachments: [], // [{path, name, size}]
 };
 
 // ---------- helpers ----------
@@ -66,7 +71,9 @@ function setStatus(kind, label) {
 function autoResizeTextarea() {
   els.input.style.height = 'auto';
   els.input.style.height = Math.min(els.input.scrollHeight, 200) + 'px';
-  els.sendBtn.disabled = !els.input.value.trim() || state.busy || !state.ready;
+  const hasContent =
+    els.input.value.trim() || (state.attachments && state.attachments.length > 0);
+  els.sendBtn.disabled = !hasContent || state.busy || !state.ready;
 }
 
 function scrollToBottom() {
@@ -400,18 +407,96 @@ function renderTools(tools) {
 // ---------- Send ----------
 function sendMessage() {
   const text = els.input.value.trim();
-  if (!text || state.busy || !state.ready) return;
+  const hasFiles = state.attachments.length > 0;
+  if ((!text && !hasFiles) || state.busy || !state.ready) return;
 
-  addMessage('user', { text });
+  // Build the outgoing message: append saved file paths so the model can call
+  // a tool (read_pdf, load_data, ocr_image, ...) on them.
+  let outgoing = text;
+  if (hasFiles) {
+    const lines = state.attachments
+      .map((f) => `- ${f.name}: ${f.path}`)
+      .join('\n');
+    const note = `The user uploaded the following file(s). Use the absolute path(s) when calling tools:\n${lines}`;
+    outgoing = text ? `${text}\n\n${note}` : note;
+  }
+
+  // Show the user's text plus a compact attachment summary in the bubble.
+  const bubbleText = hasFiles
+    ? `${text}${text ? '\n\n' : ''}📎 ${state.attachments.map((f) => f.name).join(', ')}`
+    : text;
+  addMessage('user', { text: bubbleText });
+
   els.input.value = '';
   autoResizeTextarea();
+  clearAttachments();
   state.busy = true;
   setStatus('busy', 'thinking');
   ensureBotMessage();
   state.currentBotMsg.content.innerHTML =
     '<div class="typing"><span></span><span></span><span></span></div>';
 
-  state.ws.send(JSON.stringify({ message: text }));
+  state.ws.send(JSON.stringify({ message: outgoing }));
+}
+
+// ---------- File upload ----------
+function renderAttachments() {
+  const bar = els.attachmentBar;
+  bar.innerHTML = '';
+  if (state.attachments.length === 0) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  state.attachments.forEach((f, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'attachment-chip';
+    chip.innerHTML = `<span class="attachment-name"></span>
+      <button type="button" class="attachment-remove" aria-label="Remove">×</button>`;
+    chip.querySelector('.attachment-name').textContent = f.name;
+    chip.querySelector('.attachment-remove').addEventListener('click', () => {
+      state.attachments.splice(idx, 1);
+      renderAttachments();
+      updateSendState();
+    });
+    bar.appendChild(chip);
+  });
+}
+
+function clearAttachments() {
+  state.attachments = [];
+  renderAttachments();
+}
+
+async function uploadFiles(files) {
+  for (const file of files) {
+    const pending = { name: file.name, path: null, size: file.size, uploading: true };
+    state.attachments.push(pending);
+    renderAttachments();
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        state.attachments = state.attachments.filter((a) => a !== pending);
+        addMessage('assistant', { text: `⚠️ Upload failed for ${file.name}: ${data.error || res.status}` });
+      } else {
+        pending.path = data.path;
+        pending.size = data.size;
+        pending.uploading = false;
+      }
+    } catch (e) {
+      state.attachments = state.attachments.filter((a) => a !== pending);
+      addMessage('assistant', { text: `⚠️ Upload error for ${file.name}: ${e}` });
+    }
+    renderAttachments();
+    updateSendState();
+  }
+}
+
+function updateSendState() {
+  autoResizeTextarea();
 }
 
 // ---------- Events ----------
@@ -423,6 +508,14 @@ els.input.addEventListener('keydown', (e) => {
   }
 });
 els.composer.addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
+
+els.attachBtn.addEventListener('click', () => els.fileInput.click());
+els.fileInput.addEventListener('change', () => {
+  if (els.fileInput.files && els.fileInput.files.length) {
+    uploadFiles(Array.from(els.fileInput.files));
+    els.fileInput.value = ''; // allow re-selecting the same file
+  }
+});
 
 els.toolSearch.addEventListener('input', () => {
   const q = els.toolSearch.value.toLowerCase();

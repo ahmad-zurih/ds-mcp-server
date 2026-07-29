@@ -157,6 +157,49 @@ def test_plot_endpoint_serves_file_inside_plots_dir(app_no_bridge, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# /api/upload
+# ---------------------------------------------------------------------------
+
+
+def test_upload_accepts_csv_and_returns_path(app_no_bridge):
+    with TestClient(app_no_bridge) as client:
+        r = client.post(
+            "/api/upload",
+            files={"file": ("data.csv", b"a,b\n1,2\n", "text/csv")},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["name"] == "data.csv"
+        assert data["size"] == len(b"a,b\n1,2\n")
+        assert os.path.exists(data["path"])
+        with open(data["path"], "rb") as fh:
+            assert fh.read() == b"a,b\n1,2\n"
+
+
+def test_upload_rejects_disallowed_extension(app_no_bridge):
+    with TestClient(app_no_bridge) as client:
+        r = client.post(
+            "/api/upload",
+            files={"file": ("evil.py", b"print('x')", "text/x-python")},
+        )
+        assert r.status_code == 400
+        assert "not allowed" in r.json()["error"]
+
+
+def test_upload_sanitizes_path_traversal_name(app_no_bridge):
+    with TestClient(app_no_bridge) as client:
+        r = client.post(
+            "/api/upload",
+            files={"file": ("../../etc/passwd.csv", b"x\n", "text/csv")},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        # Directory components must be stripped from the stored name.
+        assert "/" not in data["name"]
+        assert ".." not in data["name"]
+
+
+# ---------------------------------------------------------------------------
 # CLI wiring
 # ---------------------------------------------------------------------------
 

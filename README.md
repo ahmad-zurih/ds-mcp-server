@@ -34,6 +34,9 @@ Optional extras:
 ```bash
 pip install -e ".[anthropic]"
 pip install -e ".[playwright]"
+pip install -e ".[documents]"   # read_pdf, read_docx, read_excel_sheets, tables
+pip install -e ".[ocr]"         # ocr_image (also needs the tesseract binary)
+pip install -e ".[profiling]"   # profile_dataset (ydata-profiling)
 pip install -e ".[all]"
 ```
 
@@ -448,6 +451,25 @@ uses the public caption API; GitHub is rate-limited without a token).
 | `youtube_transcript` | Get a video's transcript with minute-level timestamps; requires `pip install 'ds-mcp-server[research]'` |
 
 **Optional token**: set `GITHUB_TOKEN` to avoid GitHub's 10 req/hr anonymous rate limit (raises to 30/min).
+
+### Document / file intelligence
+
+Extract text, tables and structured previews from documents. Heavy libraries are
+imported lazily, so install only the extra you need:
+
+| Tool | What it does | Install |
+|------|-------------|---------|
+| `read_pdf` | Extract text (and optionally tables) from a PDF; supports page ranges like `"1,3,5-8"` | `pip install 'ds-mcp-server[documents]'` |
+| `extract_tables_from_pdf` | Pull structured tables out of a PDF as markdown | `pip install 'ds-mcp-server[documents]'` |
+| `read_docx` | Extract paragraphs and tables from a Word `.docx` | `pip install 'ds-mcp-server[documents]'` |
+| `read_excel_sheets` | List every sheet in a workbook and preview the first rows of each | `pip install 'ds-mcp-server[documents]'` |
+| `ocr_image` | OCR text out of a screenshot or photo | `pip install 'ds-mcp-server[ocr]'` + the Tesseract binary |
+| `summarize_document` | Chunk a long PDF/DOCX/TXT and hand it to the model to summarize | (uses `[documents]` for PDF/DOCX) |
+| `profile_dataset` | Generate an interactive ydata-profiling HTML report for a dataset | `pip install 'ds-mcp-server[profiling]'` |
+
+In the web UI you can upload a file straight into the conversation with the 📎
+button next to the message box; the saved path is passed to the model so it can
+call any of these tools on it.
 
 ## Requirements
 

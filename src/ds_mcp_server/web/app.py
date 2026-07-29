@@ -15,12 +15,15 @@ import asyncio
 import json
 import mimetypes
 import os
+import re
 import sys
+import tempfile
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from mcp import ClientSession
@@ -72,6 +75,25 @@ def _apply_agent_config(bridge: "_McpBridge", incoming: dict[str, Any]) -> None:
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _ALLOWED_PLOT_EXTS = {".png", ".jpg", ".jpeg", ".svg", ".html", ".json"}
+
+# Where uploaded files are stored. The path deliberately contains a "runs"
+# segment so plots generated next to an upload (in an adjacent plots/ dir) are
+# servable through /api/plot's allow-list.
+_UPLOAD_ROOT = Path(tempfile.gettempdir()) / "ds-mcp-runs"
+# File types the chat upload accepts: data, documents and images.
+_ALLOWED_UPLOAD_EXTS = {
+    ".csv", ".tsv", ".xlsx", ".xls", ".json",
+    ".pdf", ".docx", ".txt", ".md", ".markdown", ".rst", ".log",
+    ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp",
+}
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _sanitize_filename(name: str) -> str:
+    """Strip path components and unsafe characters from an uploaded filename."""
+    base = os.path.basename(name or "").strip()
+    base = re.sub(r"[^\w.\-]", "_", base).lstrip(".")
+    return base or "upload"
 
 
 def _resolve_provider() -> str:
@@ -331,6 +353,59 @@ def create_app() -> FastAPI:
             return JSONResponse({"error": "path not permitted"}, status_code=403)
         media, _ = mimetypes.guess_type(str(p))
         return FileResponse(str(p), media_type=media or "application/octet-stream")
+
+    @app.post("/api/upload")
+    async def upload_file(file: UploadFile = File(...)) -> Response:
+        """
+        Accept a file uploaded from the chat composer and save it server-side.
+
+        Returns the absolute path where the file was stored so the user's next
+        message can reference it and the LLM can call a tool (read_pdf,
+        load_data, ocr_image, ...) on that path. Files land under a per-upload
+        run directory; any plots a tool generates next to it remain servable.
+        """
+        filename = _sanitize_filename(file.filename or "upload")
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in _ALLOWED_UPLOAD_EXTS:
+            return JSONResponse(
+                {
+                    "error": f"file type '{ext or '?'}' not allowed",
+                    "allowed": sorted(_ALLOWED_UPLOAD_EXTS),
+                },
+                status_code=400,
+            )
+
+        run_dir = _UPLOAD_ROOT / uuid.uuid4().hex[:12]
+        run_dir.mkdir(parents=True, exist_ok=True)
+        dest = run_dir / filename
+
+        size = 0
+        try:
+            with open(dest, "wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > _MAX_UPLOAD_BYTES:
+                        out.close()
+                        dest.unlink(missing_ok=True)
+                        return JSONResponse(
+                            {
+                                "error": "file too large",
+                                "max_bytes": _MAX_UPLOAD_BYTES,
+                            },
+                            status_code=413,
+                        )
+                    out.write(chunk)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"error": f"upload failed: {exc}"}, status_code=500)
+        finally:
+            await file.close()
+
+        return JSONResponse(
+            {"path": str(dest), "name": filename, "size": size}
+        )
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:
