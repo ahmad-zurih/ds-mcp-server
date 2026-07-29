@@ -15,6 +15,21 @@ After you `pip install ds-mcp-server`, three commands are available:
 > **In short:** for humans → `ds-mcp-webui` or `ds-mcp-client`.
 > For MCP clients configured with a `command` field → `ds-mcp-server`.
 
+> ⚠️ **Intended use: local, single-user.**
+> The web UI (`ds-mcp-webui`) and terminal client (`ds-mcp-client`) are designed
+> to be run **locally by one person on their own machine** — like Jupyter,
+> Streamlit, or a local Ollama UI. They are **not** multi-tenant and have no
+> authentication, per-user isolation, or rate limiting: a single shared MCP
+> session, global settings, and one set of API keys are shared by every
+> connection. Some tools (the opt-in **system tools** and **unrestricted
+> custom-plot exec**) can execute code with your privileges.
+>
+> **Do not expose these servers to the public internet or untrusted users or
+> networks.** Bind them to `localhost` (the default), and if you need remote
+> access, put them behind your own authenticated tunnel/VPN. Enabling the
+> dangerous toggles on a machine reachable by others is a remote-code-execution
+> risk. See [Optional system tools](#optional-system-tools) for details.
+
 ## Installation
 
 Install from PyPI:
