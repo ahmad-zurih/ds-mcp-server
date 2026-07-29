@@ -72,7 +72,7 @@ def profile_dataset_impl(
     code = (
         "import pandas as pd\n"
         "from ydata_profiling import ProfileReport\n\n"
-        f"df = pd.read_csv('your_data.csv')\n"
+        "df = pd.read_csv('your_data.csv')\n"
         f"profile = ProfileReport(df, title={title!r}, minimal={minimal})\n"
         "profile.to_file('profile_report.html')"
     )

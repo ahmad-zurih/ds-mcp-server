@@ -90,6 +90,14 @@ class TestSummarizeText:
         out = dt.summarize_document_impl(str(f))
         assert "No extractable text" in out
 
+    def test_summarize_unsupported_type_returns_error(self, tmp_path):
+        f = tmp_path / "weird.xyz"
+        f.write_text("some content")
+        out = dt.summarize_document_impl(str(f))
+        assert out.startswith("Error: unsupported document type")
+        # The error must be surfaced verbatim, never chunked as content.
+        assert "Chunk" not in out
+
 
 # ---------------------------------------------------------------------------
 # Real extraction (guarded by importorskip)

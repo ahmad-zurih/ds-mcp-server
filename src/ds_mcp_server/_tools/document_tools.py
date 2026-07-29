@@ -372,22 +372,31 @@ def ocr_image_impl(file_path: str, lang: str = "eng", max_chars: int = _DEFAULT_
 # ---------------------------------------------------------------------------
 
 
-def _extract_document_text(file_path: str) -> str:
-    """Extract plain text from a supported document type (pdf/docx/txt/md/csv)."""
+def _extract_document_text(file_path: str) -> tuple[bool, str]:
+    """Extract plain text from a supported document type (pdf/docx/txt/md/csv).
+
+    Returns ``(ok, text)``. When ``ok`` is False, ``text`` is an error or
+    install-hint message that should be surfaced to the caller verbatim rather
+    than treated as document content.
+    """
     lower = file_path.lower()
     if lower.endswith(".pdf"):
-        return read_pdf_impl(file_path, max_chars=0)
+        out = read_pdf_impl(file_path, max_chars=0)
+        ok = not out.startswith(("Error", "pypdf is not installed"))
+        return ok, out
     if lower.endswith(".docx"):
-        return read_docx_impl(file_path, max_chars=0)
+        out = read_docx_impl(file_path, max_chars=0)
+        ok = not out.startswith(("Error", "python-docx is not installed"))
+        return ok, out
     if lower.endswith((".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv")):
         for enc in ("utf-8", "latin1"):
             try:
                 with open(file_path, "r", encoding=enc) as fh:
-                    return fh.read()
+                    return True, fh.read()
             except UnicodeDecodeError:
                 continue
-        return "Error: could not decode text file."
-    return (
+        return False, "Error: could not decode text file."
+    return False, (
         f"Error: unsupported document type for summarization: "
         f"{os.path.basename(file_path)}. Supported: pdf, docx, txt, md, csv."
     )
@@ -409,9 +418,8 @@ def summarize_document_impl(
     if err:
         return err
 
-    text = _extract_document_text(file_path)
-    if text.startswith("Error:") or text.startswith("pypdf is not installed") \
-            or text.startswith("python-docx is not installed"):
+    ok, text = _extract_document_text(file_path)
+    if not ok:
         return text
 
     text = text.strip()

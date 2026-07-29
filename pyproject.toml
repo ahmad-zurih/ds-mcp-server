@@ -64,16 +64,7 @@ ocr = ["pytesseract>=0.3.10", "Pillow>=10.0"]
 # [profiling] adds one-shot dataset profiling reports
 profiling = ["ydata-profiling>=4.6"]
 all = [
-    "anthropic>=0.20",
-    "playwright>=1.40",
-    "youtube-transcript-api>=0.6",
-    "pypdf>=4.0",
-    "pdfplumber>=0.11",
-    "python-docx>=1.1",
-    "openpyxl>=3.1",
-    "pytesseract>=0.3.10",
-    "Pillow>=10.0",
-    "ydata-profiling>=4.6",
+    "ds-mcp-server[anthropic,playwright,research,documents,ocr,profiling]",
 ]
 dev = [
     "pytest>=7.4",
