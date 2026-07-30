@@ -329,6 +329,22 @@ chat through your API key.
 | `API_BASE_URL` | Sometimes | Required for `openai-compat`; optional override for Ollama, Gemini, or self-hosted endpoints. |
 | `MODEL` | No | Model override. Defaults are provider-specific. |
 
+### Reliability / anti-hang knobs
+
+Single-agent chat runs an LLM↔tool loop. Weak or looping models (common with
+small self-hosted backends) can otherwise keep calling tools without ever
+producing a final answer, which shows up in the web UI as an endless spinner.
+These knobs bound every turn so it always terminates:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DS_MCP_MAX_STEPS` | `16` | Max LLM↔tool rounds per single-agent turn. On exceeding it the turn stops with a "stopped after N steps" notice instead of hanging. |
+| `DS_MCP_LLM_TIMEOUT` | `300` | Per-request timeout (seconds) for the OpenAI/Anthropic SDK calls. `0` disables it. Prevents a stalled provider from freezing for the SDK's ~10-minute default. |
+| `DS_MCP_TOOL_TIMEOUT` | `180` | Per-tool-call timeout (seconds). A tool that never returns (slow URL fetch, stuck shell command, ...) is aborted with a readable error. `0` disables it. |
+
+> Multi-agent mode has its own independent budgets (`MAX_ROUNDS`,
+> `MAX_WORKER_RETRIES`, `MAX_WORKER_STEPS`) — see below.
+
 ## Multi-agent mode (supervisor + workers)
 
 By default one LLM sees every tool at once. As the tool catalogue grows this hurts

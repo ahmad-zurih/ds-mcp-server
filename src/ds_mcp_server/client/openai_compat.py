@@ -8,12 +8,19 @@ import asyncio
 import json
 import os
 import sys
+from typing import Any
 
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 from openai import OpenAI
 
-from ds_mcp_server.client._base import call_tool_async, get_server_params, list_tools_async
+from ds_mcp_server.client._base import (
+    call_tool_async,
+    get_server_params,
+    list_tools_async,
+    llm_request_timeout,
+    max_agent_steps,
+)
 from ds_mcp_server.prompts import build_system_prompt
 
 _PROVIDER_DEFAULTS: dict[str, dict[str, str | None]] = {
@@ -46,7 +53,7 @@ def _build_client(provider: str, model_override: str | None) -> tuple[OpenAI, st
     if not api_key:
         print("[Error] API_KEY not set. Add it to .env")
         sys.exit(1)
-    client_kwargs: dict[str, str] = {"api_key": api_key}
+    client_kwargs: dict[str, Any] = {"api_key": api_key, "timeout": llm_request_timeout()}
     if base_url:
         client_kwargs["base_url"] = base_url
     return OpenAI(**client_kwargs), model, base_url or "https://api.openai.com/v1"
@@ -87,7 +94,7 @@ async def _chat_loop(provider: str, model_override: str | None) -> None:
                 if not user_input:
                     continue
                 conversation.append({"role": "user", "content": user_input})
-                while True:
+                for _step in range(max_agent_steps()):
                     resp = llm.chat.completions.create(
                         model=model,
                         messages=conversation,
@@ -110,6 +117,12 @@ async def _chat_loop(provider: str, model_override: str | None) -> None:
                         conversation.append(
                             {"role": "tool", "tool_call_id": tc.id, "content": result}
                         )
+                else:
+                    print(
+                        "\n[stopped after the step limit without a final answer. "
+                        "The model may be looping — raise DS_MCP_MAX_STEPS or try a "
+                        "stronger model.]\n"
+                    )
 
 
 def run_chat(provider: str = "openai", model_override: str | None = None) -> None:

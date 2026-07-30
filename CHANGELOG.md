@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-30
+
+### Fixed
+- **Chat turns can no longer hang forever.** The single-agent web and terminal
+  loops previously ran `while True` and only exited when the model returned a
+  message with no tool calls — a weak or looping model (or malformed tool-call
+  arguments) could keep calling tools indefinitely, leaving the web UI spinning
+  with no end. All single-agent loops are now capped at `DS_MCP_MAX_STEPS`
+  rounds (default 16) and emit a clear "stopped after N steps" message instead
+  of hanging.
+- **Stalled provider requests fail fast.** The OpenAI/Anthropic clients are now
+  built with an explicit request timeout (`DS_MCP_LLM_TIMEOUT`, default 300s)
+  instead of relying on the SDK's ~10-minute default.
+- **Hanging tools time out.** `call_tool_async` is now bounded by
+  `DS_MCP_TOOL_TIMEOUT` (default 180s), so a stuck tool (slow URL fetch, a
+  shell command that never returns, ...) returns a readable timeout error
+  rather than blocking the whole turn.
+- Blocking LLM SDK calls in the web path now run via `asyncio.to_thread`, so a
+  slow provider no longer freezes the server's event loop / other traffic.
+
 ### Changed
 - **Consolidated and enriched the system prompts.** Introduced a single
   capability-aware prompt builder (`ds_mcp_server.prompts.build_system_prompt`)

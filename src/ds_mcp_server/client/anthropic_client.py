@@ -11,7 +11,7 @@ import sys
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
-from ds_mcp_server.client._base import call_tool_async, get_server_params, list_tools_async
+from ds_mcp_server.client._base import call_tool_async, get_server_params, list_tools_async, max_agent_steps
 from ds_mcp_server.prompts import build_system_prompt
 
 
@@ -64,7 +64,7 @@ async def _chat_loop(model_override: str | None) -> None:
                 if not user_input:
                     continue
                 messages.append({"role": "user", "content": user_input})
-                while True:
+                for _step in range(max_agent_steps()):
                     resp = client.messages.create(
                         model=model,
                         max_tokens=4096,
@@ -92,6 +92,12 @@ async def _chat_loop(model_override: str | None) -> None:
                             {"type": "tool_result", "tool_use_id": block.id, "content": result}
                         )
                     messages.append({"role": "user", "content": tool_results})
+                else:
+                    print(
+                        "\n[stopped after the step limit without a final answer. "
+                        "The model may be looping — raise DS_MCP_MAX_STEPS or try a "
+                        "stronger model.]\n"
+                    )
 
 
 def run_chat(model_override: str | None = None) -> None:

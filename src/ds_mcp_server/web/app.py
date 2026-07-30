@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
-from ds_mcp_server.client._base import list_tools_async
+from ds_mcp_server.client._base import list_tools_async, llm_request_timeout
 from ds_mcp_server.prompts import build_system_prompt
 from ds_mcp_server.web.chat import (
     run_anthropic_turn,
@@ -95,6 +95,10 @@ def _sanitize_filename(name: str) -> str:
     base = os.path.basename(name or "").strip()
     base = re.sub(r"[^\w.\-]", "_", base).lstrip(".")
     return base or "upload"
+
+
+def _llm_timeout() -> float | None:
+    return llm_request_timeout()
 
 
 def _resolve_provider() -> str:
@@ -437,7 +441,7 @@ def create_app() -> FastAPI:
                 await websocket.send_json({"type": "error", "message": "ANTHROPIC_API_KEY / API_KEY not set"})
                 await websocket.close()
                 return
-            anth_client = Anthropic(api_key=api_key)
+            anth_client = Anthropic(api_key=api_key, timeout=_llm_timeout())
         else:
             try:
                 from openai import OpenAI
@@ -453,7 +457,7 @@ def create_app() -> FastAPI:
                 await websocket.send_json({"type": "error", "message": "API_KEY not set"})
                 await websocket.close()
                 return
-            kwargs: dict[str, str] = {"api_key": api_key}
+            kwargs: dict[str, Any] = {"api_key": api_key, "timeout": _llm_timeout()}
             if base_url:
                 kwargs["base_url"] = base_url
             elif provider == "gemini":

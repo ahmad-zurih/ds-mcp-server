@@ -22,7 +22,7 @@ from typing import Any, AsyncIterator
 
 from mcp import ClientSession
 
-from ds_mcp_server.client._base import call_tool_async, list_tools_async
+from ds_mcp_server.client._base import call_tool_async, list_tools_async, max_agent_steps
 
 # Matches "path|||code" returns from the plot tools.
 _PLOT_RETURN_RE = re.compile(
@@ -73,6 +73,9 @@ async def run_openai_turn(
     if system_prompt and not (conversation and conversation[0].get("role") == "system"):
         conversation.insert(0, {"role": "system", "content": system_prompt})
 
+    if system_prompt and not (conversation and conversation[0].get("role") == "system"):
+        conversation.insert(0, {"role": "system", "content": system_prompt})
+
     tools_raw = await list_tools_async(session)
     tools_openai = [
         {
@@ -86,8 +89,10 @@ async def run_openai_turn(
         for t in tools_raw
     ]
 
-    while True:
-        resp = llm.chat.completions.create(
+    max_steps = max_agent_steps()
+    for _step in range(max_steps):
+        resp = await asyncio.to_thread(
+            llm.chat.completions.create,
             model=model,
             messages=conversation,
             tools=tools_openai,
@@ -118,6 +123,15 @@ async def run_openai_turn(
                 {"role": "tool", "tool_call_id": tc.id, "content": result}
             )
 
+    yield {
+        "type": "text",
+        "text": (
+            f"[stopped after {max_steps} tool-calling steps without a final answer. "
+            "The model may be stuck in a loop — try rephrasing your request, using a "
+            "stronger model, or raising DS_MCP_MAX_STEPS.]"
+        ),
+    }
+
 
 # ---------------------------------------------------------------------------
 # Anthropic provider
@@ -142,8 +156,10 @@ async def run_anthropic_turn(
         for t in tools_raw
     ]
 
-    while True:
-        resp = client.messages.create(
+    max_steps = max_agent_steps()
+    for _step in range(max_steps):
+        resp = await asyncio.to_thread(
+            client.messages.create,
             model=model,
             max_tokens=4096,
             system=system_prompt,
@@ -179,6 +195,15 @@ async def run_anthropic_turn(
                 {"type": "tool_result", "tool_use_id": block.id, "content": result}
             )
         messages.append({"role": "user", "content": tool_results})
+
+    yield {
+        "type": "text",
+        "text": (
+            f"[stopped after {max_steps} tool-calling steps without a final answer. "
+            "The model may be stuck in a loop — try rephrasing your request, using a "
+            "stronger model, or raising DS_MCP_MAX_STEPS.]"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
