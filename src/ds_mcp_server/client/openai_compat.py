@@ -14,6 +14,7 @@ from mcp.client.stdio import stdio_client
 from openai import OpenAI
 
 from ds_mcp_server.client._base import call_tool_async, get_server_params, list_tools_async
+from ds_mcp_server.prompts import build_system_prompt
 
 _PROVIDER_DEFAULTS: dict[str, dict[str, str | None]] = {
     "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o"},
@@ -74,7 +75,8 @@ async def _chat_loop(provider: str, model_override: str | None) -> None:
             print(f"[ds-mcp-client] server   : {base_url}")
             print(f"[ds-mcp-client] tools    : {len(tools_openai)} loaded")
             print("[ds-mcp-client] Type 'quit' to exit.\n")
-            conversation: list[dict] = []
+            system_prompt = build_system_prompt([t["name"] for t in tools_raw])
+            conversation: list[dict] = [{"role": "system", "content": system_prompt}]
             while True:
                 try:
                     user_input = input("You: ").strip()

@@ -63,11 +63,16 @@ async def run_openai_turn(
     llm,
     model: str,
     conversation: list[dict[str, Any]],
+    system_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """
     One user->assistant turn using the OpenAI SDK. Mutates ``conversation``
-    in place so the caller keeps history across turns.
+    in place so the caller keeps history across turns. If ``system_prompt`` is
+    given and the conversation has no system message yet, it is prepended.
     """
+    if system_prompt and not (conversation and conversation[0].get("role") == "system"):
+        conversation.insert(0, {"role": "system", "content": system_prompt})
+
     tools_raw = await list_tools_async(session)
     tools_openai = [
         {

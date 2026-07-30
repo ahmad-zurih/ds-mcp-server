@@ -104,7 +104,16 @@ class Supervisor:
             desc = worker.description or ""
             tools = ", ".join(worker.tool_names)
             lines.append(f"- {cat}: {desc} (tools: {tools})")
-        return _SUPERVISOR_SYSTEM.format(categories="\n".join(lines))
+        prompt = _SUPERVISOR_SYSTEM.format(categories="\n".join(lines))
+        if "system" in self.workers:
+            prompt += (
+                "\n\nNote: the 'system' worker can run shell commands and modify "
+                "files on the user's machine. Delegate to it only when the request "
+                "needs it, and never instruct it to run destructive or irreversible "
+                "commands (such as deleting or overwriting data) unless the user "
+                "explicitly asked for that specific action."
+            )
+        return prompt
 
     def reset_history(self) -> None:
         """Forget all remembered turns (used by the UI's 'new chat' button)."""

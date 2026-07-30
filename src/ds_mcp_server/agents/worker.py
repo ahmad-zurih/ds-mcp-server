@@ -19,6 +19,7 @@ from ds_mcp_server.agents.protocol import (
     tool_msg,
     user_msg,
 )
+from ds_mcp_server.prompts import CATEGORY_PLAYBOOKS
 
 # Callable that actually invokes an MCP tool: (name, args) -> result text.
 ToolRunner = Callable[[str, dict], Awaitable[str]]
@@ -67,6 +68,7 @@ _WORKER_SYSTEM = (
     "you did and any file paths or key findings. Do NOT call a tool in that "
     "final message.\n"
     "- Stay strictly within your task; do not attempt work outside your domain."
+    "{playbook}"
 )
 
 
@@ -107,8 +109,11 @@ class Worker:
         return last
 
     async def _run_once(self, task: str, attempt: int) -> WorkerResult:
+        playbook = CATEGORY_PLAYBOOKS.get(self.category, "")
         system = _WORKER_SYSTEM.format(
-            category=self.category, description=self.description
+            category=self.category,
+            description=self.description,
+            playbook=f"\n\nDomain guidance:\n{playbook}" if playbook else "",
         )
         prompt = task
         if attempt > 1:

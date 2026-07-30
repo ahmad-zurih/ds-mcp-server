@@ -12,6 +12,7 @@ from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
 from ds_mcp_server.client._base import call_tool_async, get_server_params, list_tools_async
+from ds_mcp_server.prompts import build_system_prompt
 
 
 def _get_anthropic_client():
@@ -52,10 +53,7 @@ async def _chat_loop(model_override: str | None) -> None:
             print(f"[ds-mcp-client] tools    : {len(tools_anthropic)} loaded")
             print("[ds-mcp-client] Type 'quit' to exit.\n")
             messages: list[dict] = []
-            system_prompt = (
-                "You are a helpful data science assistant with access to powerful "
-                "visualization and analysis tools."
-            )
+            system_prompt = build_system_prompt([t["name"] for t in tools_raw])
             while True:
                 try:
                     user_input = input("You: ").strip()

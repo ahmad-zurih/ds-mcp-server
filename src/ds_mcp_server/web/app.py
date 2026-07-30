@@ -30,6 +30,7 @@ from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
 from ds_mcp_server.client._base import list_tools_async
+from ds_mcp_server.prompts import build_system_prompt
 from ds_mcp_server.web.chat import (
     run_anthropic_turn,
     run_multi_agent_turn,
@@ -416,11 +417,6 @@ def create_app() -> FastAPI:
         openai_conv: list[dict[str, Any]] = []
         anth_messages: list[dict[str, Any]] = []
         ma_history: list[dict[str, Any]] = []
-        system_prompt = (
-            "You are a helpful data science assistant with access to powerful "
-            "visualization and analysis tools. When you generate a plot, tell "
-            "the user what you plotted in one or two sentences."
-        )
 
         llm = None
         anth_client = None
@@ -495,6 +491,9 @@ def create_app() -> FastAPI:
                         await websocket.send_json({"type": "error", "message": "MCP session not ready"})
                         continue
                     try:
+                        system_prompt = build_system_prompt(
+                            [t["name"] for t in bridge.tools]
+                        )
                         if bridge.settings.get("multi_agent"):
                             gen = run_multi_agent_turn(
                                 bridge.session, _agent_config(bridge), user_msg, ma_history
@@ -506,7 +505,9 @@ def create_app() -> FastAPI:
                             )
                         else:
                             openai_conv.append({"role": "user", "content": user_msg})
-                            gen = run_openai_turn(bridge.session, llm, model, openai_conv)
+                            gen = run_openai_turn(
+                                bridge.session, llm, model, openai_conv, system_prompt
+                            )
                         async for event in gen:
                             await websocket.send_json(event)
                         await websocket.send_json({"type": "done"})

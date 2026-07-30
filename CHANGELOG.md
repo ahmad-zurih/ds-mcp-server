@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Consolidated and enriched the system prompts.** Introduced a single
+  capability-aware prompt builder (`ds_mcp_server.prompts.build_system_prompt`)
+  used by every single-agent entry point (terminal Anthropic + OpenAI clients,
+  web Anthropic + OpenAI paths). The prompt now reflects the full toolset —
+  data inspection, interactive/static plotting, statistics, documents/OCR,
+  web and research — and only includes guidance for the tool groups actually
+  loaded. When the optional system/shell tools are enabled it adds a short,
+  practical "system & file tools" guardrail (read before editing, prefer
+  `patch_file`, avoid destructive commands).
+- Multi-agent workers now receive a focused per-category playbook, and the
+  supervisor gains a guardrail note when the `system` worker is available.
+
+### Fixed
+- The web UI's OpenAI-compatible path (Ollama / LM Studio / OpenAI) previously
+  ran with **no system prompt** — the configured prompt was silently dropped.
+  It is now threaded through correctly.
+- The terminal OpenAI-compatible client had no system prompt at all; it now
+  uses the shared capability-aware prompt.
+
+### Removed
+- Deleted the large block of dead multi-agent prompts and tool-scoping tables
+  from `_tools/viz_config.py` (obsolete `delegate_task`/`coder` design). Only
+  the still-used `MAX_ROWS` constant remains.
+
 ## [0.3.0] - 2026-07-29
 
 ### Added
