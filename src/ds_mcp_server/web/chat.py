@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 from typing import Any, AsyncIterator
 
 from mcp import ClientSession
@@ -66,13 +67,12 @@ async def run_openai_turn(
     system_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """
-    One user->assistant turn using the OpenAI SDK. Mutates ``conversation``
-    in place so the caller keeps history across turns. If ``system_prompt`` is
-    given and the conversation has no system message yet, it is prepended.
-    """
-    if system_prompt and not (conversation and conversation[0].get("role") == "system"):
-        conversation.insert(0, {"role": "system", "content": system_prompt})
+    One user->assistant turn using the (sync) OpenAI SDK with streaming.
 
+    The sync stream runs in a daemon thread; chunks are pushed into an
+    asyncio.Queue via call_soon_threadsafe and consumed here, so the event
+    loop is never blocked and text tokens arrive as ``text_delta`` events.
+    """
     if system_prompt and not (conversation and conversation[0].get("role") == "system"):
         conversation.insert(0, {"role": "system", "content": system_prompt})
 
@@ -91,25 +91,92 @@ async def run_openai_turn(
 
     max_steps = max_agent_steps()
     for _step in range(max_steps):
-        resp = await asyncio.to_thread(
-            llm.chat.completions.create,
-            model=model,
-            messages=conversation,
-            tools=tools_openai,
-            tool_choice="auto",
-        )
-        msg = resp.choices[0].message
-        conversation.append(msg.model_dump(exclude_unset=True))
+        content_parts: list[str] = []
+        # index -> {id, name, arguments} accumulated across streaming chunks
+        tool_calls_map: dict[int, dict[str, str]] = {}
 
-        if not msg.tool_calls:
-            if msg.content:
-                yield {"type": "text", "text": msg.content}
+        # --- stream in a background thread -----------------------------------
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        _SENTINEL = object()
+
+        def _stream_thread() -> None:
+            try:
+                with llm.chat.completions.create(
+                    model=model,
+                    messages=conversation,
+                    tools=tools_openai,
+                    tool_choice="auto",
+                    stream=True,
+                ) as s:
+                    for chunk in s:
+                        loop.call_soon_threadsafe(q.put_nowait, chunk)
+            except Exception as exc:  # noqa: BLE001
+                loop.call_soon_threadsafe(q.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(q.put_nowait, _SENTINEL)
+
+        threading.Thread(target=_stream_thread, daemon=True).start()
+
+        while True:
+            item = await q.get()
+            if item is _SENTINEL:
+                break
+            if isinstance(item, Exception):
+                raise item
+            chunk = item
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+
+            if delta.content:
+                content_parts.append(delta.content)
+                yield {"type": "text_delta", "text": delta.content}
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {"id": "", "name": "", "arguments": ""}
+                    # id only appears in the first chunk for each tool call
+                    if tc.id:
+                        tool_calls_map[idx]["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            tool_calls_map[idx]["name"] += tc.function.name
+                        if tc.function.arguments:
+                            tool_calls_map[idx]["arguments"] += tc.function.arguments
+        # --- end of stream ---------------------------------------------------
+
+        full_content = "".join(content_parts) or None
+
+        if not tool_calls_map:
+            # Pure text response — text_delta events already sent to the browser
+            if full_content:
+                conversation.append({"role": "assistant", "content": full_content})
             return
 
-        for tc in msg.tool_calls:
-            name = tc.function.name
+        # Reconstruct tool_calls list ordered by streaming index
+        tool_calls_list: list[dict[str, Any]] = [
+            {
+                "id": tool_calls_map[idx]["id"],
+                "type": "function",
+                "function": {
+                    "name": tool_calls_map[idx]["name"],
+                    "arguments": tool_calls_map[idx]["arguments"],
+                },
+            }
+            for idx in sorted(tool_calls_map)
+        ]
+        assistant_msg: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls_list}
+        if full_content:
+            assistant_msg["content"] = full_content
+        conversation.append(assistant_msg)
+
+        for tc in tool_calls_list:
+            name = tc["function"]["name"]
             try:
-                args = json.loads(tc.function.arguments)
+                args = json.loads(tc["function"]["arguments"])
             except Exception:
                 args = {}
             yield {"type": "tool_call", "name": name, "arguments": args}
@@ -120,7 +187,7 @@ async def run_openai_turn(
             visible, plot = parse_tool_output(result)
             yield {"type": "tool_result", "name": name, "text": visible, "plot": plot}
             conversation.append(
-                {"role": "tool", "tool_call_id": tc.id, "content": result}
+                {"role": "tool", "tool_call_id": tc["id"], "content": result}
             )
 
     yield {
@@ -145,7 +212,14 @@ async def run_anthropic_turn(
     system_prompt: str,
     messages: list[dict[str, Any]],
 ) -> AsyncIterator[dict[str, Any]]:
-    """One user->assistant turn using the Anthropic SDK."""
+    """
+    One user->assistant turn using the (sync) Anthropic SDK with streaming.
+
+    The sync messages.stream() context manager runs in a daemon thread;
+    text tokens are pushed into an asyncio.Queue and yielded as ``text_delta``
+    events. get_final_message() is called inside the thread after the text
+    stream ends, and the complete Message is passed back for tool-call handling.
+    """
     tools_raw = await list_tools_async(session)
     tools_anthropic = [
         {
@@ -158,14 +232,43 @@ async def run_anthropic_turn(
 
     max_steps = max_agent_steps()
     for _step in range(max_steps):
-        resp = await asyncio.to_thread(
-            client.messages.create,
-            model=model,
-            max_tokens=4096,
-            system=system_prompt,
-            messages=messages,
-            tools=tools_anthropic,
-        )
+        # --- stream in a background thread -----------------------------------
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        _TEXT = "t"
+        _FINAL = "f"
+        _ERROR = "e"
+
+        def _stream_thread() -> None:
+            try:
+                with client.messages.stream(
+                    model=model,
+                    max_tokens=4096,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tools_anthropic,
+                ) as s:
+                    for text in s.text_stream:
+                        loop.call_soon_threadsafe(q.put_nowait, (_TEXT, text))
+                    loop.call_soon_threadsafe(
+                        q.put_nowait, (_FINAL, s.get_final_message())
+                    )
+            except Exception as exc:  # noqa: BLE001
+                loop.call_soon_threadsafe(q.put_nowait, (_ERROR, exc))
+
+        threading.Thread(target=_stream_thread, daemon=True).start()
+
+        resp = None
+        while True:
+            kind, val = await q.get()
+            if kind == _TEXT:
+                yield {"type": "text_delta", "text": val}
+            elif kind == _FINAL:
+                resp = val
+                break
+            elif kind == _ERROR:
+                raise val
+        # --- end of stream ---------------------------------------------------
 
         text_parts: list[str] = []
         tool_calls: list[Any] = []
@@ -177,8 +280,7 @@ async def run_anthropic_turn(
 
         if resp.stop_reason != "tool_use" or not tool_calls:
             messages.append({"role": "assistant", "content": resp.content})
-            if text_parts:
-                yield {"type": "text", "text": "".join(text_parts)}
+            # text_delta events already sent; nothing more to yield
             return
 
         messages.append({"role": "assistant", "content": resp.content})

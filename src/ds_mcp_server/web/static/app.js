@@ -304,6 +304,17 @@ function connect() {
       case 'worker_result':
         addWorkerResult(data);
         break;
+      case 'text_delta': {
+        const bot = ensureBotMessage();
+        // Remove the typing indicator on the first token
+        const typing = bot.content.querySelector('.typing');
+        if (typing) typing.remove();
+        if (!bot.streamText) bot.streamText = '';
+        bot.streamText += data.text;
+        bot.content.innerHTML = renderText(bot.streamText);
+        scrollToBottom();
+        break;
+      }
       case 'text':
         addAssistantText(data.text);
         break;
