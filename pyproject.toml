@@ -20,22 +20,22 @@ classifiers = [
 ]
 dependencies = [
     "mcp>=1.0.0,<2",
-    "pandas>=2.0",
-    "plotly>=5.0",
-    "matplotlib>=3.7",
-    "seaborn>=0.13",
-    "numpy>=1.24",
-    "pingouin>=0.5",
-    "statsmodels>=0.14",
-    "wordcloud>=1.9",
-    "beautifulsoup4>=4.12",
-    "ddgs>=6.0",
-    "python-dotenv>=1.0",
-    "openai>=1.0",
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
-    "websockets>=12",
-    "python-multipart>=0.0.9",
+    "pandas>=2.0,<3.0",
+    "plotly>=7.0",
+    "matplotlib>=3.7,<=3.10",
+    "seaborn>=0.13.2",
+    "numpy>=1.24,<2.4",
+    "pingouin>=0.6",
+    "statsmodels>=0.15",
+    "wordcloud>=1.9.6",
+    "beautifulsoup4>=4.15",
+    "ddgs>=9.16",
+    "python-dotenv>=1.2",
+    "openai>=3.8",
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.52",
+    "websockets>=17.1",
+    "python-multipart>=0.0.32",
 ]
 
 [project.urls]
@@ -44,37 +44,37 @@ Repository = "https://github.com/ahmad-zurih/ds-mcp-server"
 "Bug Tracker" = "https://github.com/ahmad-zurih/ds-mcp-server/issues"
 
 [project.optional-dependencies]
-anthropic = ["anthropic>=0.20"]
-playwright = ["playwright>=1.40"]
+anthropic = ["anthropic>=1.4"]
+playwright = ["playwright>=1.62"]
 # The [web] extra is kept for backward compatibility but is now a no-op —
 # fastapi/uvicorn/websockets ship with the base install so `ds-mcp-webui`
 # works out of the box.
 web = []
 # [research] adds YouTube transcript support (arXiv/GitHub/Wikipedia use stdlib only)
-research = ["youtube-transcript-api>=0.6"]
+research = ["youtube-transcript-api>=1.2"]
 # [documents] adds PDF / Word / Excel document-intelligence tools
 documents = [
-    "pypdf>=4.0",
-    "pdfplumber>=0.11",
-    "python-docx>=1.1",
-    "openpyxl>=3.1",
+    "pypdf>=6.17",
+    "pdfplumber>=0.11.10",
+    "python-docx>=1.2",
+    "openpyxl>=3.1.5",
 ]
 # [ocr] adds image OCR (also requires the system `tesseract` binary)
-ocr = ["pytesseract>=0.3.10", "Pillow>=10.0"]
+ocr = ["pytesseract>=0.3.13", "Pillow>=12.3"]
 # [profiling] adds one-shot dataset profiling reports
-profiling = ["ydata-profiling>=4.6"]
+profiling = ["ydata-profiling>=4.18"]
 all = [
     "ds-mcp-server[anthropic,playwright,research,documents,ocr,profiling]",
 ]
 dev = [
     "pytest>=7.4",
-    "openpyxl>=3.1",
-    "httpx>=0.27",
-    "pypdf>=4.0",
-    "pdfplumber>=0.11",
-    "python-docx>=1.1",
-    "reportlab>=4.0",
-    "Pillow>=10.0",
+    "openpyxl>=3.1.5",
+    "httpx>=0.28",
+    "pypdf>=6.17",
+    "pdfplumber>=0.11.10",
+    "python-docx>=1.2",
+    "reportlab>=5.0",
+    "Pillow>=12.3",
 ]
 
 [project.scripts]
