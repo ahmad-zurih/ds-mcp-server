@@ -41,9 +41,45 @@ class _FakeMessage:
         return {"role": "assistant", "content": self.content}
 
 
-class _FakeResp:
+class _FakeDelta:
+    """Mimics openai streaming chunk.choices[0].delta."""
+
     def __init__(self, message):
-        self.choices = [type("C", (), {"message": message})()]
+        # For a tool-call message expose tool_calls; for text expose content.
+        self.content = message.content
+        # Wrap tool_calls in streaming-delta shape: each has .index, .id,
+        # .function.name, .function.arguments
+        if message.tool_calls:
+            deltas = []
+            for i, tc in enumerate(message.tool_calls):
+                f = type("F", (), {"name": tc.function.name, "arguments": tc.function.arguments})()
+                deltas.append(type("DTC", (), {"index": i, "id": tc.id, "function": f})())
+            self.tool_calls = deltas
+        else:
+            self.tool_calls = None
+
+
+class _FakeChunk:
+    """Mimics a single openai streaming ChatCompletionChunk."""
+
+    def __init__(self, message):
+        self.choices = [type("C", (), {"delta": _FakeDelta(message)})()]
+
+
+class _FakeStream:
+    """Mimics openai.Stream — a context manager that yields one chunk."""
+
+    def __init__(self, message):
+        self._message = message
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        pass
+
+    def __iter__(self):
+        yield _FakeChunk(self._message)
 
 
 class _FakeCompletions:
@@ -51,7 +87,7 @@ class _FakeCompletions:
         self._factory = message_factory
 
     def create(self, **kwargs):
-        return _FakeResp(self._factory())
+        return _FakeStream(self._factory())
 
 
 class _FakeChat:
@@ -145,8 +181,9 @@ def test_openai_turn_returns_on_final_message(monkeypatch):
         _collect(chat_mod.run_openai_turn(session, llm, "m", []))
     )
 
-    texts = [e["text"] for e in events if e["type"] == "text"]
-    assert texts == ["all done"]
+    # Streaming path emits text_delta events (one per token), not a single "text".
+    texts = [e["text"] for e in events if e["type"] == "text_delta"]
+    assert "".join(texts) == "all done"
     # No "stopped after" notice on a clean finish.
     assert all("stopped after" not in t for t in texts)
 
