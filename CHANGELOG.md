@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-06
+
+### Fixed
+- **Web UI now streams tokens progressively.** The chat UI previously waited
+  for the full LLM response before displaying anything (all-at-once output).
+  The backend now runs the synchronous OpenAI/Anthropic streaming SDK calls in
+  a daemon thread and pipes each token into an `asyncio.Queue`, so the event
+  loop is never blocked and the browser receives `text_delta` events in real
+  time as the model generates them.
+- The frontend `app.js` handler now processes `text_delta` events to update
+  the message bubble incrementally, matching the streaming backend.
+
+### Changed
+- Bumped minimum dependency versions to current stable releases:
+  `openai>=3.8`, `fastapi>=0.141`, `uvicorn>=0.52`, `websockets>=17.1`,
+  `anthropic>=1.4`, `playwright>=1.62`, `plotly>=7.0`, `seaborn>=0.13.2`,
+  `pingouin>=0.6`, `statsmodels>=0.15`, `ddgs>=9.16`, `python-dotenv>=1.2`,
+  `python-multipart>=0.0.32`, `wordcloud>=1.9.6`, `beautifulsoup4>=4.15`,
+  `pypdf>=6.17`, `pdfplumber>=0.11.10`, `python-docx>=1.2`, `openpyxl>=3.1.5`,
+  `pytesseract>=0.3.13`, `Pillow>=12.3`, `ydata-profiling>=4.18`,
+  `youtube-transcript-api>=1.2`, `httpx>=0.28`, `reportlab>=5.0`.
+  Upper-bound constraints added for `pandas<3.0`, `matplotlib<=3.10`, and
+  `numpy<2.4` to remain compatible with `ydata-profiling`'s strict pins.
+
+### Tests
+- Updated `_FakeResp` / `_FakeCompletions` in `test_chat_safeguards.py` to
+  implement the streaming context-manager protocol (`__enter__`/`__exit__`/
+  `__iter__`) required by the new `run_openai_turn` implementation. Assertions
+  updated to match `text_delta` events instead of the old single `text` event.
+
 ## [0.3.3] - 2026-07-30
 
 ### Fixed
@@ -121,7 +151,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opt-in gating for the dangerous "system tools" group
   (`DS_MCP_ENABLE_SYSTEM_TOOLS` / `--enable-system-tools`), disabled by default.
 
-[Unreleased]: https://github.com/ahmad-zurih/ds-mcp-server/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ahmad-zurih/ds-mcp-server/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/ahmad-zurih/ds-mcp-server/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/ahmad-zurih/ds-mcp-server/compare/v0.3.0...v0.3.3
 [0.3.0]: https://github.com/ahmad-zurih/ds-mcp-server/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/ahmad-zurih/ds-mcp-server/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ahmad-zurih/ds-mcp-server/compare/v0.2.0...v0.2.1
