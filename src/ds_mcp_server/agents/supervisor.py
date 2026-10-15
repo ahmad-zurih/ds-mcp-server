@@ -8,6 +8,7 @@ declares the work ``done`` or after ``max_rounds`` rounds.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any, Callable
@@ -19,6 +20,7 @@ from ds_mcp_server.agents.protocol import (
     user_msg,
 )
 from ds_mcp_server.agents.worker import Worker
+from ds_mcp_server.client._base import truncate_text
 
 EventHook = Callable[[dict[str, Any]], None]
 
@@ -52,7 +54,19 @@ Rules:
   complete final_answer that summarises the results for the user (include any
   file paths workers reported).
 - When status is "done", "tasks" may be empty.
+- Workers have NO memory: they do not see the conversation, earlier tasks or
+  other workers' results. Put everything a worker needs into its task text:
+  exact file paths, column names, values found earlier, and the expected output.
 """
+
+# Repair prompt used once when the planner's reply is not parseable JSON.
+_JSON_REPAIR = (
+    "Your previous reply was not a valid JSON object matching the schema. "
+    "Reply again with ONLY the JSON object, no prose and no code fences."
+)
+
+# Cap on one worker report fed back to the planner.
+_BRIEF_CHARS = 4000
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -97,6 +111,7 @@ class Supervisor:
         # noisy per-round planning JSON is deliberately kept out of this list.
         self.conversation: list[dict[str, Any]] = []
         self.max_history_messages = max(0, max_history_messages)
+        self._turn_results: list[WorkerResult] = []
 
     def _system_prompt(self) -> str:
         lines = []
@@ -127,19 +142,42 @@ class Supervisor:
             del self.conversation[: len(self.conversation) - self.max_history_messages]
 
     async def run(self, user_request: str) -> str:
+        self._turn_results = []
         answer = await self._run_turn(user_request)
-        self._remember(user_request, answer)
+        # Remember produced files even if the answer forgot to mention them,
+        # so follow-ups ("now change that plot") can refer to them.
+        paths = []
+        for r in self._turn_results:
+            for a in r.artifacts:
+                p = a.get("path", "")
+                if p and p not in answer and p not in paths:
+                    paths.append(p)
+        memory = answer + ("\n\nFiles produced: " + ", ".join(paths) if paths else "")
+        self._remember(user_request, memory)
         return answer
+
+    async def _complete(self, messages: list[dict[str, Any]], system: str):
+        # The LLM SDKs are synchronous; keep them off the event loop.
+        return await asyncio.to_thread(self.llm.complete, messages, system=system)
 
     async def _run_turn(self, user_request: str) -> str:
         system = self._system_prompt()
         # Seed with prior clean turns so the supervisor remembers the conversation.
         messages = list(self.conversation) + [user_msg(user_request)]
-        all_results: list[WorkerResult] = []
+        all_results: list[WorkerResult] = self._turn_results
 
         for round_no in range(1, self.max_rounds + 1):
-            resp = self.llm.complete(messages, system=system)
+            resp = await self._complete(messages, system)
             plan = _extract_json(resp.text)
+            if plan is None and "{" in resp.text:
+                # Looks like a botched plan (not a plain-text answer): ask once
+                # for valid JSON instead of showing the user half-written JSON.
+                retry = await self._complete(
+                    messages + [assistant_msg(resp.text), user_msg(_JSON_REPAIR)], system
+                )
+                plan = _extract_json(retry.text)
+                if plan is not None:
+                    resp = retry
             messages.append(assistant_msg(resp.text))
 
             if plan is None:
@@ -148,7 +186,8 @@ class Supervisor:
                 return resp.text.strip() or "(supervisor produced no output)"
 
             status = str(plan.get("status", "continue")).lower()
-            tasks = plan.get("tasks") or []
+            raw_tasks = plan.get("tasks")
+            tasks = [t for t in raw_tasks if isinstance(t, dict)] if isinstance(raw_tasks, list) else []
             self.on_event(
                 {
                     "type": "plan",
@@ -160,10 +199,10 @@ class Supervisor:
             )
 
             if status == "done" or not tasks:
-                final = (plan.get("final_answer") or "").strip()
+                final = str(plan.get("final_answer") or "").strip()
                 if not final and status != "done":
                     # No tasks and not explicitly done: nudge once more.
-                    final = plan.get("reasoning", "").strip()
+                    final = str(plan.get("reasoning") or "").strip()
                 if final:
                     self.on_event({"type": "final", "text": final, "round": round_no})
                     return final
@@ -172,7 +211,7 @@ class Supervisor:
             round_results = await self._dispatch(tasks, round_no)
             all_results.extend(round_results)
 
-            briefs = "\n\n".join(r.brief() for r in round_results)
+            briefs = "\n\n".join(truncate_text(r.brief(), _BRIEF_CHARS) for r in round_results)
             messages.append(
                 user_msg(
                     "Worker results for this round:\n\n"
@@ -249,7 +288,7 @@ class Supervisor:
                 "that could not be completed."
             )
         )
-        resp = self.llm.complete(messages, system=system)
+        resp = await self._complete(messages, system)
         final = _extract_json(resp.text)
         text = ""
         if final and final.get("final_answer"):

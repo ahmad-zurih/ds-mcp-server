@@ -15,15 +15,25 @@ The websocket layer forwards these as JSON messages to the browser.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import threading
-from typing import Any, AsyncIterator
+from contextlib import aclosing
+from typing import Any, AsyncIterator, Callable
 
 from mcp import ClientSession
 
-from ds_mcp_server.client._base import call_tool_async, list_tools_async, max_agent_steps
+from ds_mcp_server.client._base import (
+    RepeatGuard,
+    call_tool_async,
+    compact_history,
+    list_tools_async,
+    max_agent_steps,
+    max_output_tokens,
+    max_tool_result_chars,
+    parse_tool_arguments,
+    truncate_text,
+)
 
 # Matches "path|||code" returns from the plot tools.
 _PLOT_RETURN_RE = re.compile(
@@ -55,6 +65,96 @@ def parse_tool_output(text: str) -> tuple[str, dict[str, str] | None]:
 
 
 # ---------------------------------------------------------------------------
+# Shared loop helpers
+# ---------------------------------------------------------------------------
+
+# Sent (not persisted) with the final, tool-free call once the step budget is spent.
+_WRAP_UP_NOTE = (
+    "[harness] The tool-call budget for this request is used up. Do not call any "
+    "more tools. Using only the results above, give the user your best final "
+    "answer now, and say clearly what could not be completed."
+)
+
+
+def _stop_notice(max_steps: int) -> str:
+    return (
+        f"[stopped after {max_steps} tool-calling steps without a final answer. "
+        "The model may be stuck in a loop — try rephrasing your request, using a "
+        "stronger model, or raising DS_MCP_MAX_STEPS.]"
+    )
+
+
+def _post(loop: asyncio.AbstractEventLoop, q: asyncio.Queue, item: Any) -> None:
+    """Hand an item to the event loop from a worker thread (no-op if it closed)."""
+    try:
+        loop.call_soon_threadsafe(q.put_nowait, item)
+    except RuntimeError:
+        pass
+
+
+async def _thread_stream(
+    open_stream: Callable[[], Any],
+    iterate: Callable[[Any], Any] = lambda s: s,
+    finalize: Callable[[Any], Any] | None = None,
+) -> AsyncIterator[tuple[str, Any]]:
+    """
+    Drive a *sync* SDK streaming context manager from a daemon thread.
+
+    Yields ``("item", x)`` for each streamed element and, if ``finalize`` is
+    given, one ``("final", finalize(stream))``. Items cross into the event loop
+    via ``call_soon_threadsafe`` so the loop is never blocked. When the consumer
+    stops early (error, client disconnect) the thread is told to stop and the
+    HTTP stream is closed instead of being read to the end in the background.
+    """
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue = asyncio.Queue()
+    stop = threading.Event()
+
+    def _worker() -> None:
+        try:
+            with open_stream() as s:
+                for item in iterate(s):
+                    if stop.is_set():
+                        return
+                    _post(loop, q, ("item", item))
+                if finalize is not None and not stop.is_set():
+                    _post(loop, q, ("final", finalize(s)))
+        except Exception as exc:  # noqa: BLE001
+            _post(loop, q, ("error", exc))
+        finally:
+            _post(loop, q, ("end", None))
+
+    threading.Thread(target=_worker, daemon=True).start()
+    try:
+        while True:
+            kind, val = await q.get()
+            if kind == "end":
+                return
+            if kind == "error":
+                raise val
+            yield kind, val
+    finally:
+        stop.set()
+
+
+async def _execute_tool(
+    session: ClientSession,
+    name: str,
+    args: dict[str, Any],
+    arg_error: str | None,
+    guard: RepeatGuard,
+) -> str:
+    """Run one tool call, unless its arguments are broken or it is a repeat."""
+    result = arg_error or guard.check(name, args)
+    if result is not None:
+        return result
+    try:
+        return await call_tool_async(session, name, args)
+    except Exception as exc:  # noqa: BLE001
+        return f"[tool error] {exc}"
+
+
+# ---------------------------------------------------------------------------
 # OpenAI-compatible provider (OpenAI, Ollama, Gemini, LM Studio, GPUStack, …)
 # ---------------------------------------------------------------------------
 
@@ -69,12 +169,17 @@ async def run_openai_turn(
     """
     One user->assistant turn using the (sync) OpenAI SDK with streaming.
 
-    The sync stream runs in a daemon thread; chunks are pushed into an
-    asyncio.Queue via call_soon_threadsafe and consumed here, so the event
-    loop is never blocked and text tokens arrive as ``text_delta`` events.
+    Runs up to ``DS_MCP_MAX_STEPS`` tool rounds, then one last call with tools
+    disabled so the user gets an answer built from the work already done
+    rather than a bare "stopped" notice. ``conversation`` is the persistent
+    history; it is compacted to ``DS_MCP_HISTORY_CHARS`` before each call.
     """
-    if system_prompt and not (conversation and conversation[0].get("role") == "system"):
-        conversation.insert(0, {"role": "system", "content": system_prompt})
+    if system_prompt:
+        if conversation and conversation[0].get("role") == "system":
+            # Refresh: the tool set may have changed (settings toggles).
+            conversation[0]["content"] = system_prompt
+        else:
+            conversation.insert(0, {"role": "system", "content": system_prompt})
 
     tools_raw = await list_tools_async(session)
     tools_openai = [
@@ -90,76 +195,73 @@ async def run_openai_turn(
     ]
 
     max_steps = max_agent_steps()
-    for _step in range(max_steps):
+    result_cap = max_tool_result_chars()
+    guard = RepeatGuard()
+    for step in range(max_steps + 1):
+        wrap_up = step == max_steps
+        compact_history(conversation)
+        request_messages = conversation
+        if wrap_up:
+            request_messages = conversation + [{"role": "user", "content": _WRAP_UP_NOTE}]
+
         content_parts: list[str] = []
         # index -> {id, name, arguments} accumulated across streaming chunks
         tool_calls_map: dict[int, dict[str, str]] = {}
+        finish_reason: str | None = None
 
-        # --- stream in a background thread -----------------------------------
-        loop = asyncio.get_running_loop()
-        q: asyncio.Queue = asyncio.Queue()
-        _SENTINEL = object()
+        def _open(msgs=request_messages, choice="none" if wrap_up else "auto"):
+            return llm.chat.completions.create(
+                model=model,
+                messages=msgs,
+                tools=tools_openai,
+                tool_choice=choice,
+                stream=True,
+            )
 
-        def _stream_thread() -> None:
-            try:
-                with llm.chat.completions.create(
-                    model=model,
-                    messages=conversation,
-                    tools=tools_openai,
-                    tool_choice="auto",
-                    stream=True,
-                ) as s:
-                    for chunk in s:
-                        loop.call_soon_threadsafe(q.put_nowait, chunk)
-            except Exception as exc:  # noqa: BLE001
-                loop.call_soon_threadsafe(q.put_nowait, exc)
-            finally:
-                loop.call_soon_threadsafe(q.put_nowait, _SENTINEL)
+        async with aclosing(_thread_stream(_open)) as stream:
+            async for _kind, chunk in stream:
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+                delta = choice.delta
 
-        threading.Thread(target=_stream_thread, daemon=True).start()
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield {"type": "text_delta", "text": delta.content}
 
-        while True:
-            item = await q.get()
-            if item is _SENTINEL:
-                break
-            if isinstance(item, Exception):
-                raise item
-            chunk = item
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-
-            if delta.content:
-                content_parts.append(delta.content)
-                yield {"type": "text_delta", "text": delta.content}
-
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    idx = tc.index
-                    if idx not in tool_calls_map:
-                        tool_calls_map[idx] = {"id": "", "name": "", "arguments": ""}
-                    # id only appears in the first chunk for each tool call
-                    if tc.id:
-                        tool_calls_map[idx]["id"] = tc.id
-                    if tc.function:
-                        if tc.function.name:
-                            tool_calls_map[idx]["name"] += tc.function.name
-                        if tc.function.arguments:
-                            tool_calls_map[idx]["arguments"] += tc.function.arguments
-        # --- end of stream ---------------------------------------------------
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_map:
+                            tool_calls_map[idx] = {"id": "", "name": "", "arguments": ""}
+                        # id only appears in the first chunk for each tool call
+                        if tc.id:
+                            tool_calls_map[idx]["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                tool_calls_map[idx]["name"] += tc.function.name
+                            if tc.function.arguments:
+                                tool_calls_map[idx]["arguments"] += tc.function.arguments
 
         full_content = "".join(content_parts) or None
 
-        if not tool_calls_map:
-            # Pure text response — text_delta events already sent to the browser
+        if wrap_up or not tool_calls_map:
+            # Final answer. Tool calls in the wrap-up call are ignored (some
+            # providers do not honour tool_choice="none").
             if full_content:
                 conversation.append({"role": "assistant", "content": full_content})
+                if finish_reason == "length":
+                    yield {"type": "text", "text": "[answer cut off: the model hit its output-length limit]"}
+            elif wrap_up:
+                yield {"type": "text", "text": _stop_notice(max_steps)}
             return
 
-        # Reconstruct tool_calls list ordered by streaming index
+        # Reconstruct tool_calls list ordered by streaming index. Some
+        # OpenAI-compatible servers omit ids; tool replies need one to match.
         tool_calls_list: list[dict[str, Any]] = [
             {
-                "id": tool_calls_map[idx]["id"],
+                "id": tool_calls_map[idx]["id"] or f"call_{step}_{idx}",
                 "type": "function",
                 "function": {
                     "name": tool_calls_map[idx]["name"],
@@ -175,34 +277,34 @@ async def run_openai_turn(
 
         for tc in tool_calls_list:
             name = tc["function"]["name"]
-            try:
-                args = json.loads(tc["function"]["arguments"])
-            except Exception:
-                args = {}
+            args, arg_error = parse_tool_arguments(tc["function"]["arguments"])
             yield {"type": "tool_call", "name": name, "arguments": args}
-            try:
-                result = await call_tool_async(session, name, args)
-            except Exception as exc:  # noqa: BLE001
-                result = f"[tool error] {exc}"
+            result = await _execute_tool(session, name, args, arg_error, guard)
             visible, plot = parse_tool_output(result)
             yield {"type": "tool_result", "name": name, "text": visible, "plot": plot}
             conversation.append(
-                {"role": "tool", "tool_call_id": tc["id"], "content": result}
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": truncate_text(result, result_cap),
+                }
             )
-
-    yield {
-        "type": "text",
-        "text": (
-            f"[stopped after {max_steps} tool-calling steps without a final answer. "
-            "The model may be stuck in a loop — try rephrasing your request, using a "
-            "stronger model, or raising DS_MCP_MAX_STEPS.]"
-        ),
-    }
 
 
 # ---------------------------------------------------------------------------
 # Anthropic provider
 # ---------------------------------------------------------------------------
+
+
+def _with_note(messages: list[dict[str, Any]], note: str) -> list[dict[str, Any]]:
+    """Copy of ``messages`` with ``note`` added to the trailing user message."""
+    if not messages or messages[-1].get("role") != "user":
+        return messages + [{"role": "user", "content": note}]
+    last = messages[-1]
+    content = last["content"]
+    blocks = list(content) if isinstance(content, list) else [{"type": "text", "text": content}]
+    blocks.append({"type": "text", "text": note})
+    return messages[:-1] + [{"role": "user", "content": blocks}]
 
 
 async def run_anthropic_turn(
@@ -215,10 +317,9 @@ async def run_anthropic_turn(
     """
     One user->assistant turn using the (sync) Anthropic SDK with streaming.
 
-    The sync messages.stream() context manager runs in a daemon thread;
-    text tokens are pushed into an asyncio.Queue and yielded as ``text_delta``
-    events. get_final_message() is called inside the thread after the text
-    stream ends, and the complete Message is passed back for tool-call handling.
+    Text tokens are yielded as ``text_delta`` events; the complete Message is
+    fetched with get_final_message() for tool-call handling. Same step budget,
+    wrap-up call and history compaction as ``run_openai_turn``.
     """
     tools_raw = await list_tools_async(session)
     tools_anthropic = [
@@ -231,81 +332,85 @@ async def run_anthropic_turn(
     ]
 
     max_steps = max_agent_steps()
-    for _step in range(max_steps):
-        # --- stream in a background thread -----------------------------------
-        loop = asyncio.get_running_loop()
-        q: asyncio.Queue = asyncio.Queue()
-        _TEXT = "t"
-        _FINAL = "f"
-        _ERROR = "e"
-
-        def _stream_thread() -> None:
-            try:
-                with client.messages.stream(
-                    model=model,
-                    max_tokens=4096,
-                    system=system_prompt,
-                    messages=messages,
-                    tools=tools_anthropic,
-                ) as s:
-                    for text in s.text_stream:
-                        loop.call_soon_threadsafe(q.put_nowait, (_TEXT, text))
-                    loop.call_soon_threadsafe(
-                        q.put_nowait, (_FINAL, s.get_final_message())
-                    )
-            except Exception as exc:  # noqa: BLE001
-                loop.call_soon_threadsafe(q.put_nowait, (_ERROR, exc))
-
-        threading.Thread(target=_stream_thread, daemon=True).start()
+    max_tokens = max_output_tokens()
+    result_cap = max_tool_result_chars()
+    guard = RepeatGuard()
+    for step in range(max_steps + 1):
+        wrap_up = step == max_steps
+        compact_history(messages)
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "messages": _with_note(messages, _WRAP_UP_NOTE) if wrap_up else messages,
+            # Tools must stay declared while the history holds tool_use blocks.
+            "tools": tools_anthropic,
+        }
+        if wrap_up:
+            kwargs["tool_choice"] = {"type": "none"}
 
         resp = None
-        while True:
-            kind, val = await q.get()
-            if kind == _TEXT:
-                yield {"type": "text_delta", "text": val}
-            elif kind == _FINAL:
-                resp = val
-                break
-            elif kind == _ERROR:
-                raise val
-        # --- end of stream ---------------------------------------------------
+        async with aclosing(
+            _thread_stream(
+                lambda kw=kwargs: client.messages.stream(**kw),
+                iterate=lambda s: s.text_stream,
+                finalize=lambda s: s.get_final_message(),
+            )
+        ) as stream:
+            async for kind, val in stream:
+                if kind == "item":
+                    yield {"type": "text_delta", "text": val}
+                else:
+                    resp = val
+        if resp is None:
+            raise RuntimeError("Anthropic stream ended without a final message")
 
-        text_parts: list[str] = []
-        tool_calls: list[Any] = []
-        for block in resp.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-            elif block.type == "tool_use":
-                tool_calls.append(block)
+        tool_calls = [b for b in resp.content if b.type == "tool_use"]
+        truncated = resp.stop_reason == "max_tokens"
 
-        if resp.stop_reason != "tool_use" or not tool_calls:
-            messages.append({"role": "assistant", "content": resp.content})
-            # text_delta events already sent; nothing more to yield
+        if wrap_up or not tool_calls:
+            # Never persist a tool_use block without a matching tool_result:
+            # the API would reject every later request in this chat.
+            content = [b for b in resp.content if b.type != "tool_use"]
+            if content:
+                messages.append({"role": "assistant", "content": content})
+                if truncated:
+                    yield {
+                        "type": "text",
+                        "text": "[answer cut off at the output-token limit; raise DS_MCP_MAX_TOKENS]",
+                    }
+            else:
+                note = _stop_notice(max_steps) if wrap_up else "(no response)"
+                messages.append({"role": "assistant", "content": note})
+                if wrap_up:
+                    yield {"type": "text", "text": note}
             return
 
         messages.append({"role": "assistant", "content": resp.content})
         tool_results: list[dict[str, Any]] = []
         for block in tool_calls:
-            yield {"type": "tool_call", "name": block.name, "arguments": dict(block.input)}
-            try:
-                result = await call_tool_async(session, block.name, dict(block.input))
-            except Exception as exc:  # noqa: BLE001
-                result = f"[tool error] {exc}"
+            args = dict(block.input) if isinstance(block.input, dict) else {}
+            yield {"type": "tool_call", "name": block.name, "arguments": args}
+            if truncated:
+                # The response ran out of tokens while writing this call, so
+                # its input is incomplete — don't run it, tell the model why.
+                result = (
+                    "[tool error] Your response hit the output-token limit while "
+                    "writing this tool call, so its arguments are incomplete and it "
+                    "was NOT run. Retry with a shorter input (e.g. less code per call)."
+                )
+            else:
+                result = await _execute_tool(session, block.name, args, None, guard)
             visible, plot = parse_tool_output(result)
             yield {"type": "tool_result", "name": block.name, "text": visible, "plot": plot}
             tool_results.append(
-                {"type": "tool_result", "tool_use_id": block.id, "content": result}
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": truncate_text(result, result_cap),
+                }
             )
         messages.append({"role": "user", "content": tool_results})
-
-    yield {
-        "type": "text",
-        "text": (
-            f"[stopped after {max_steps} tool-calling steps without a final answer. "
-            "The model may be stuck in a loop — try rephrasing your request, using a "
-            "stronger model, or raising DS_MCP_MAX_STEPS.]"
-        ),
-    }
 
 
 # ---------------------------------------------------------------------------

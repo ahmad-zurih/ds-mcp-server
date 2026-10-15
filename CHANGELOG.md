@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Anthropic: a response cut off at `max_tokens` mid tool call left an
+  unanswered `tool_use` block in history, so every later message in the chat
+  failed with a 400 error. Incomplete calls are now answered with an error
+  result and never executed.
+- Tool arguments that are not valid JSON are no longer silently replaced with
+  `{}`; the tool is skipped and the model is told to re-issue the call.
+- A turn that fails mid-way (rate limit, timeout) now leaves the chat history
+  in a valid state instead of with orphaned tool calls or a dangling message.
+- Multi-agent: LLM calls no longer block the web server's event loop; the
+  clients now honour `DS_MCP_LLM_TIMEOUT`; `max_tokens` is no longer sent to
+  OpenAI-compatible APIs (OpenAI reasoning models reject it); empty messages are
+  no longer sent to Anthropic.
+- Multi-agent: tool-error detection no longer flags successful output that
+  merely contains words like "failed", and now recognises `[tool error]`,
+  `[tool timeout]` and MCP's `isError` flag.
+- OpenAI path: the system prompt is refreshed when tools are toggled.
+
+### Changed
+- Chat history is bounded (`DS_MCP_HISTORY_CHARS`) and single tool results
+  are capped (`DS_MCP_MAX_TOOL_RESULT_CHARS`), so long sessions no longer
+  overflow the context window.
+- When `DS_MCP_MAX_STEPS` is reached, the web UI makes one final tool-free
+  call so the user gets an answer from the work already done.
+- Identical repeated tool calls (same tool and arguments, more than twice in a
+  turn) are short-circuited by the harness.
+- Worker retries are told why the previous attempt failed; the supervisor is
+  told workers have no memory, re-asks once for valid plan JSON, and remembers
+  files produced in earlier turns.
+- Anthropic output-token limit is configurable via `DS_MCP_MAX_TOKENS`
+  (default raised from 4096 to 8192).
+- Streaming threads stop reading from the provider when the client disconnects.
+
 ## [0.3.4] - 2026-09-06
 
 ### Fixed

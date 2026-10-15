@@ -5,7 +5,6 @@ Supports: OpenAI, GPUStack, Ollama, LM Studio, Azure OpenAI, Google Gemini.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 from typing import Any
@@ -16,10 +15,14 @@ from openai import OpenAI
 
 from ds_mcp_server.client._base import (
     call_tool_async,
+    compact_history,
     get_server_params,
     list_tools_async,
     llm_request_timeout,
     max_agent_steps,
+    max_tool_result_chars,
+    parse_tool_arguments,
+    truncate_text,
 )
 from ds_mcp_server.prompts import build_system_prompt
 
@@ -95,6 +98,7 @@ async def _chat_loop(provider: str, model_override: str | None) -> None:
                     continue
                 conversation.append({"role": "user", "content": user_input})
                 for _step in range(max_agent_steps()):
+                    compact_history(conversation)
                     resp = llm.chat.completions.create(
                         model=model,
                         messages=conversation,
@@ -108,14 +112,15 @@ async def _chat_loop(provider: str, model_override: str | None) -> None:
                         break
                     for tc in msg.tool_calls:
                         name = tc.function.name
-                        try:
-                            args = json.loads(tc.function.arguments)
-                        except Exception:
-                            args = {}
+                        args, arg_error = parse_tool_arguments(tc.function.arguments)
                         print(f"  > {name}")
-                        result = await call_tool_async(session, name, args)
+                        result = arg_error or await call_tool_async(session, name, args)
                         conversation.append(
-                            {"role": "tool", "tool_call_id": tc.id, "content": result}
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": truncate_text(result, max_tool_result_chars()),
+                            }
                         )
                 else:
                     print(

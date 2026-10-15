@@ -338,9 +338,16 @@ These knobs bound every turn so it always terminates:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DS_MCP_MAX_STEPS` | `16` | Max LLM↔tool rounds per single-agent turn. On exceeding it the turn stops with a "stopped after N steps" notice instead of hanging. |
-| `DS_MCP_LLM_TIMEOUT` | `300` | Per-request timeout (seconds) for the OpenAI/Anthropic SDK calls. `0` disables it. Prevents a stalled provider from freezing for the SDK's ~10-minute default. |
+| `DS_MCP_MAX_STEPS` | `16` | Max LLM↔tool rounds per single-agent turn. When it is reached the web UI makes one last call with tools disabled so the model answers from the work already done; only if that fails is a "stopped after N steps" notice shown. |
+| `DS_MCP_LLM_TIMEOUT` | `300` | Per-request timeout (seconds) for the OpenAI/Anthropic SDK calls (single- and multi-agent). `0` disables it. Prevents a stalled provider from freezing for the SDK's ~10-minute default. |
 | `DS_MCP_TOOL_TIMEOUT` | `180` | Per-tool-call timeout (seconds). A tool that never returns (slow URL fetch, stuck shell command, ...) is aborted with a readable error. `0` disables it. |
+| `DS_MCP_MAX_TOKENS` | `8192` | Max output tokens per Anthropic response. Too low truncates long answers and large tool inputs (e.g. generated plotting code). |
+| `DS_MCP_MAX_TOOL_RESULT_CHARS` | `20000` | Cap on one tool result sent back to the model. `0` disables it. |
+| `DS_MCP_HISTORY_CHARS` | `100000` | Size budget (≈4 chars/token) for remembered chat history. Older turns' tool outputs are clipped first, then the oldest turns are dropped. Lower it for small-context local models; `0` disables trimming. |
+
+The model may call the same tool with identical arguments at most twice per
+turn; further repeats are answered by the harness with a "change approach"
+message instead of re-running the tool.
 
 > Multi-agent mode has its own independent budgets (`MAX_ROUNDS`,
 > `MAX_WORKER_RETRIES`, `MAX_WORKER_STEPS`) — see below.

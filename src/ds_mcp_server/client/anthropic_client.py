@@ -11,7 +11,17 @@ import sys
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
-from ds_mcp_server.client._base import call_tool_async, get_server_params, list_tools_async, max_agent_steps
+from ds_mcp_server.client._base import (
+    call_tool_async,
+    compact_history,
+    get_server_params,
+    list_tools_async,
+    llm_request_timeout,
+    max_agent_steps,
+    max_output_tokens,
+    max_tool_result_chars,
+    truncate_text,
+)
 from ds_mcp_server.prompts import build_system_prompt
 
 
@@ -29,7 +39,7 @@ def _get_anthropic_client():
     if not api_key:
         print("[Error] ANTHROPIC_API_KEY or API_KEY not set in .env")
         sys.exit(1)
-    return Anthropic(api_key=api_key)
+    return Anthropic(api_key=api_key, timeout=llm_request_timeout())
 
 
 async def _chat_loop(model_override: str | None) -> None:
@@ -65,9 +75,10 @@ async def _chat_loop(model_override: str | None) -> None:
                     continue
                 messages.append({"role": "user", "content": user_input})
                 for _step in range(max_agent_steps()):
+                    compact_history(messages)
                     resp = client.messages.create(
                         model=model,
-                        max_tokens=4096,
+                        max_tokens=max_output_tokens(),
                         system=system_prompt,
                         messages=messages,
                         tools=tools_anthropic,
@@ -79,17 +90,31 @@ async def _chat_loop(model_override: str | None) -> None:
                             text_parts.append(block.text)
                         elif block.type == "tool_use":
                             tool_calls.append(block)
-                    if resp.stop_reason != "tool_use" or not tool_calls:
+                    if not tool_calls:
                         print(f"\nAssistant: {''.join(text_parts)}\n")
-                        messages.append({"role": "assistant", "content": resp.content})
+                        messages.append(
+                            {"role": "assistant", "content": resp.content or "(no response)"}
+                        )
                         break
+                    # Every tool_use block needs a tool_result, even when the
+                    # response was cut off (stop_reason == "max_tokens").
                     messages.append({"role": "assistant", "content": resp.content})
                     tool_results = []
                     for block in tool_calls:
                         print(f"  > {block.name}")
-                        result = await call_tool_async(session, block.name, dict(block.input))
+                        if resp.stop_reason == "max_tokens":
+                            result = (
+                                "[tool error] Output-token limit hit while writing this "
+                                "call; arguments incomplete, NOT run. Retry with less input."
+                            )
+                        else:
+                            result = await call_tool_async(session, block.name, dict(block.input))
                         tool_results.append(
-                            {"type": "tool_result", "tool_use_id": block.id, "content": result}
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": truncate_text(result, max_tool_result_chars()),
+                            }
                         )
                     messages.append({"role": "user", "content": tool_results})
                 else:

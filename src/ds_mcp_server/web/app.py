@@ -19,7 +19,7 @@ import re
 import sys
 import tempfile
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
-from ds_mcp_server.client._base import list_tools_async, llm_request_timeout
+from ds_mcp_server.client._base import list_tools_async, llm_request_timeout, repair_history
 from ds_mcp_server.prompts import build_system_prompt
 from ds_mcp_server.web.chat import (
     run_anthropic_turn,
@@ -494,6 +494,7 @@ def create_app() -> FastAPI:
                     if bridge.session is None:
                         await websocket.send_json({"type": "error", "message": "MCP session not ready"})
                         continue
+                    history: list[dict[str, Any]] | None = None
                     try:
                         system_prompt = build_system_prompt(
                             [t["name"] for t in bridge.tools]
@@ -503,21 +504,33 @@ def create_app() -> FastAPI:
                                 bridge.session, _agent_config(bridge), user_msg, ma_history
                             )
                         elif provider == "anthropic":
+                            history = anth_messages
                             anth_messages.append({"role": "user", "content": user_msg})
                             gen = run_anthropic_turn(
                                 bridge.session, anth_client, model, system_prompt, anth_messages
                             )
                         else:
+                            history = openai_conv
                             openai_conv.append({"role": "user", "content": user_msg})
                             gen = run_openai_turn(
                                 bridge.session, llm, model, openai_conv, system_prompt
                             )
-                        async for event in gen:
-                            await websocket.send_json(event)
+                        async with aclosing(gen):
+                            async for event in gen:
+                                await websocket.send_json(event)
                         await websocket.send_json({"type": "done"})
+                    except WebSocketDisconnect:
+                        raise
                     except Exception as exc:  # noqa: BLE001
-                        await websocket.send_json({"type": "error", "message": str(exc)})
-                        await websocket.send_json({"type": "done"})
+                        # Leave the history in a state the provider accepts
+                        # (no orphaned tool calls, no dangling user turn).
+                        if history is not None:
+                            repair_history(history, str(exc))
+                        try:
+                            await websocket.send_json({"type": "error", "message": str(exc)})
+                            await websocket.send_json({"type": "done"})
+                        except Exception:  # noqa: BLE001 - client already gone
+                            return
         except WebSocketDisconnect:
             return
 

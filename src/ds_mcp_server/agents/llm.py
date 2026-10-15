@@ -15,6 +15,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ds_mcp_server.agents.protocol import LLMResponse, ToolCall
+from ds_mcp_server.client._base import (
+    llm_request_timeout,
+    max_output_tokens,
+    parse_tool_arguments,
+)
+
+# Anthropic rejects empty message content; used when a turn has no text.
+_EMPTY = "(empty)"
 
 
 class LLMClient(ABC):
@@ -29,7 +37,7 @@ class LLMClient(ABC):
         *,
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Run one completion. ``tools`` are normalised MCP tool specs."""
         raise NotImplementedError
@@ -109,7 +117,7 @@ def _messages_to_anthropic(messages: list[dict[str, Any]]) -> list[dict[str, Any
     for m in messages:
         role = m["role"]
         if role == "user":
-            out.append({"role": "user", "content": m.get("content", "")})
+            out.append({"role": "user", "content": m.get("content") or _EMPTY})
         elif role == "assistant":
             blocks: list[dict[str, Any]] = []
             if m.get("content"):
@@ -118,7 +126,7 @@ def _messages_to_anthropic(messages: list[dict[str, Any]]) -> list[dict[str, Any
                 blocks.append(
                     {"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.arguments}
                 )
-            out.append({"role": "assistant", "content": blocks or ""})
+            out.append({"role": "assistant", "content": blocks or _EMPTY})
         elif role == "tool":
             block = {
                 "type": "tool_result",
@@ -146,7 +154,7 @@ class OpenAIClient(LLMClient):
     def __init__(self, model: str, api_key: str, base_url: str | None = None):
         from openai import OpenAI
 
-        kwargs: dict[str, Any] = {"api_key": api_key}
+        kwargs: dict[str, Any] = {"api_key": api_key, "timeout": llm_request_timeout()}
         if base_url:
             kwargs["base_url"] = base_url
         self._client = OpenAI(**kwargs)
@@ -158,17 +166,19 @@ class OpenAIClient(LLMClient):
         *,
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         native: list[dict[str, Any]] = []
         if system:
             native.append({"role": "system", "content": system})
         native.extend(_messages_to_openai(messages))
 
+        # ``max_tokens`` is deliberately not sent: OpenAI reasoning models
+        # reject it (they want ``max_completion_tokens``), and the single-agent
+        # path never sent it either.
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": native,
-            "max_tokens": max_tokens,
         }
         if tools:
             kwargs["tools"] = _tools_to_openai(tools)
@@ -177,12 +187,16 @@ class OpenAIClient(LLMClient):
         resp = self._client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         calls: list[ToolCall] = []
-        for tc in msg.tool_calls or []:
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except Exception:
-                args = {}
-            calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
+        for i, tc in enumerate(msg.tool_calls or []):
+            args, err = parse_tool_arguments(tc.function.arguments)
+            calls.append(
+                ToolCall(
+                    id=tc.id or f"call_{i}",
+                    name=tc.function.name,
+                    arguments=args,
+                    parse_error=err or "",
+                )
+            )
         return LLMResponse(text=msg.content or "", tool_calls=calls)
 
 
@@ -195,7 +209,7 @@ class AnthropicClient(LLMClient):
     def __init__(self, model: str, api_key: str):
         from anthropic import Anthropic
 
-        self._client = Anthropic(api_key=api_key)
+        self._client = Anthropic(api_key=api_key, timeout=llm_request_timeout())
         self.model = model
 
     def complete(
@@ -204,11 +218,11 @@ class AnthropicClient(LLMClient):
         *,
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "max_tokens": max_tokens,
+            "max_tokens": max_tokens or max_output_tokens(),
             "messages": _messages_to_anthropic(messages),
         }
         if system:

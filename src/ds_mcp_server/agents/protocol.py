@@ -18,6 +18,9 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    # Set when the model's raw arguments were not valid JSON; the call must
+    # not be executed and this message is returned to the model instead.
+    parse_error: str = ""
 
 
 @dataclass
